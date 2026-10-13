@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "offer-coach"
+version = "0.1.0"
+description = "为自己打造的面试诊断 Agent —— Harness 架构的 Python 手写实现"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.40",
+    "pydantic>=2.6",
+    "typer>=0.12",
+    "rich>=13.7",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+offer-coach = "offer_coach.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
