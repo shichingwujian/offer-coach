@@ -1,10 +1,10 @@
 # progress.md
 
-> **下次从这里开始：核心层 D1-D10 收官 ✅（75 测试全过，笔记 learning/01-08）→ 深度冲刺 D11：先造尺子（召回评估集 + 纯 FTS5 基线 recall@5）再升级（混合召回），最后消融实验（D006）**
+> **下次从这里开始：D11 收官 ✅（explain-back #9 通过，笔记 learning/09）→ D12 查询预处理（整句拆成关键词 OR，预期转述/场景破零）→ 开工前讲"拆词"概念**
 
 ## 当前阶段
 
-核心层 D1-D10 收官 ✅（75 测试全过）→ 深度冲刺：① 召回评估集 + FTS5 基线 ② 混合召回（FTS5+向量）③ 机制消融
+核心层 D1-D10 收官 ✅ → 深度冲刺中：D11 评估集+基线 ✅（81 测试全过）→ D12 查询预处理（拆词）→ D13 混合召回 → D14 消融
 
 ## 进行中
 
@@ -22,6 +22,7 @@
 - D8：权限闸 `permission/gate.py`——默认拒绝白名单、confirm 人在环中、remembered 集合（首次问后续记住）、审计留痕；Session 存档/读档（Pydantic dump/validate）；8 测试
 - D9：Hook+Command 落地 `hooks/pipeline.py`——pre/post 两排插孔（短路/逐级改写）、truncate_hook 实战插件、权限闸 as_hook() 改造为插件（适配器）、loop 内联闸门删除换管线、CLI chat REPL + 斜杠命令直达电梯；9 测试（累计 57）；笔记 learning/07（讲解版）
 - D10：Memory 层落地 `src/offer_coach/memory/`——MemoryStore（SQLite，confidence 坐实度 +0.1 封顶、access_count 召回计数、画像 patch 合并）、make_memory_hook（旁观型 post 插件：只看 analyze、只记 <3 分、解析不到宁可不记、同维度坐实不新增）、recall_block（开局召回：画像非空字段 + ≥0.6 弱点 + 最近 2 次摘要）、analyze 工具升级 v2（JSON 评分 + 确定性渲染 + 原文兜底）、diagnose 接线（剧本注入历史档案、跑成才记档）、CLI --memory + /profile /memory 命令；18 测试（累计 75）；笔记 learning/08（D007：死规则写入 + 只坐实不洗白）
+- D11：召回评估集落地 `eval/recall_set.jsonl`（54 条手写：keyword 20 / paraphrase 18 / scenario 16）+ `evaluation/recall.py`（run_recall 注入式检索函数，同一把尺子量不同策略）+ CLI `eval` 命令；**基线：recall@5 = 37.0%（keyword 100% / paraphrase 0% / scenario 0%）——漏网全是"无结果"，整句短语匹配是元凶**；6 测试（累计 81）；结果记录在 eval/README.md
 
 ## 阻塞 / 问题
 

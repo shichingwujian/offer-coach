@@ -8,8 +8,9 @@ from dotenv import load_dotenv
 
 from offer_coach.context import ContextManager
 from offer_coach.engine import EngineConfig, Message, OpenAIProvider, QueryEngine, QueryEngineError
+from offer_coach.evaluation import format_report, load_eval_set, run_recall
 from offer_coach.hooks import HookPipeline, truncate_hook
-from offer_coach.knowledge.db import build_db
+from offer_coach.knowledge.db import build_db, search_questions
 from offer_coach.memory import MemoryStore, make_memory_hook, recall_block
 from offer_coach.permission import PermissionGate
 from offer_coach.skills import diagnose
@@ -82,6 +83,19 @@ def diagnose_cmd(
 
 # diagnose 作为最常用的命令，注册为 diagnose（函数名带 _cmd 避免和 skills.diagnose 撞名）
 app.command(name="diagnose")(diagnose_cmd)
+
+
+@app.command(name="eval")
+def eval_cmd(
+    eval_set: Path = typer.Option(Path("eval/recall_set.jsonl"), "--set", help="评估集路径（JSONL）"),
+    db: Path = typer.Option(Path("questions.db"), help="题库数据库路径"),
+    k: int = typer.Option(5, help="recall@k 的 k（前 k 个结果里命中即算中）"),
+) -> None:
+    """召回评估：跑评估集出 recall@k。纯本地检索，零模型调用、零成本。"""
+    cases = load_eval_set(eval_set)
+    # 注入被测的检索函数（D11 基线 = 纯 FTS5；混合召回做好后换同一个接口再测）
+    report = run_recall(cases, lambda q: search_questions(db, q, limit=k), k=k)
+    typer.echo(format_report(report))
 
 
 _PROFILE_KEYS = {"岗位": "target_role", "技术栈": "tech_stack"}

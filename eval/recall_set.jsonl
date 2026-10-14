@@ -1,0 +1,54 @@
+{"query": "余弦相似度", "type": "keyword", "expect": ["什么是余弦相似度？在 RAG 系统中用来做什么？"]}
+{"query": "为什么需要向量检索", "type": "keyword", "expect": ["RAG 为什么需要向量检索？和传统关键词检索有什么本质区别？"]}
+{"query": "父子索引", "type": "keyword", "expect": ["RAG 中为什么引入父子索引？"]}
+{"query": "分块策略怎么设计", "type": "keyword", "expect": ["分块策略怎么设计？不同策略的优缺点？"]}
+{"query": "向量数据库怎么选型", "type": "keyword", "expect": ["向量数据库怎么选型？不同规模下该用什么方案？"]}
+{"query": "BM25", "type": "keyword", "expect": ["为什么在检索阶段引入BM25？它和向量检索怎样组合？"]}
+{"query": "RRF", "type": "keyword", "expect": ["RRF（Reciprocal Rank Fusion）是什么？如何融合多路检索结果？"]}
+{"query": "Cross-Encoder 重排", "type": "keyword", "expect": ["粗排后为什么需要使用 Cross-Encoder 重排？两阶段检索如何分工？"]}
+{"query": "如何提高文档召回率", "type": "keyword", "expect": ["RAG 中如何提高文档召回率？"]}
+{"query": "IVF_FLAT 和 HNSW", "type": "keyword", "expect": ["向量数据库中 IVF_FLAT 和 HNSW 索引的区别是什么？各自适合什么场景？"]}
+{"query": "Agentic RAG", "type": "keyword", "expect": ["Agentic RAG 是什么？和传统 RAG 的核心区别？"]}
+{"query": "长短期记忆", "type": "keyword", "expect": ["讲一下 Agent 中的“长短期记忆”"]}
+{"query": "Lost in the Middle", "type": "keyword", "expect": ["Lost in the Middle 问题是什么？有哪些解决方案？"]}
+{"query": "滑动窗口设几轮", "type": "keyword", "expect": ["会话记忆具体是怎么实现的？滑动窗口设几轮？摘要压缩怎么触发？"]}
+{"query": "Prompt Caching", "type": "keyword", "expect": ["什么是上下文缓存（Prompt Caching）？它在 Agent 系统中有什么价值？"]}
+{"query": "MCP 是什么", "type": "keyword", "expect": ["MCP 是什么？它解决了 Function Calling 的什么根本问题？"]}
+{"query": "Harness Engineering 是什么", "type": "keyword", "expect": ["Harness Engineering 是什么？如果让你构建一个 Harness 体系，你会做哪些工作？", "Harness Engineering 是什么？它如何演进的？"]}
+{"query": "工具 schema", "type": "keyword", "expect": ["你会如何设计工具 schema，才能降低模型传错参数、漏参数、乱调用的问题？"]}
+{"query": "提示词模板", "type": "keyword", "expect": ["提示词模板是怎么构建的？"]}
+{"query": "动态 Prompt 和静态 Prompt", "type": "keyword", "expect": ["动态 Prompt 和静态 Prompt 有什么区别？各自在什么场景下用？"]}
+{"query": "向量检索和关键词检索有啥不一样", "type": "paraphrase", "expect": ["RAG 为什么需要向量检索？和传统关键词检索有什么本质区别？"]}
+{"query": "把文本变成向量是干嘛的", "type": "paraphrase", "expect": ["什么是嵌入（Embedding）？为什么 RAG 系统需要将文本转为向量？"]}
+{"query": "搜索结果排序不准怎么再排一次", "type": "paraphrase", "expect": ["Reranker 的原理、效果上限与评估方法是什么？", "粗排后为什么需要使用 Cross-Encoder 重排？两阶段检索如何分工？", "Rerank 后一般返回几个块？TopK 截断策略怎么设计？"]}
+{"query": "怎么让搜出来的文档更多更全", "type": "paraphrase", "expect": ["RAG 中如何提高文档召回率？"]}
+{"query": "关键词匹配和语义相似各搜一遍再合起来", "type": "paraphrase", "expect": ["混合检索到底在哪个环节比单独用效果好？", "图检索、向量检索、混合检索有什么区别？怎么选？", "为什么在检索阶段引入BM25？它和向量检索怎样组合？"]}
+{"query": "微调模型和挂知识库到底怎么选", "type": "paraphrase", "expect": ["RAG 架构与模型微调（Fine-tuning）相比，各自的适用场景和优缺点是什么？"]}
+{"query": "搜到的内容不够回答问题怎么办", "type": "paraphrase", "expect": ["RAG 检索到的 Chunk 不足以回答问题，后续怎么处理？"]}
+{"query": "一个大问题拆成几个小问题分别去查", "type": "paraphrase", "expect": ["RAG 中如何进行查询分解与子问题拆分？"]}
+{"query": "聊着聊着前面说的话装不下了", "type": "paraphrase", "expect": ["上下文窗口不够用，对话太长了怎么办？"]}
+{"query": "哪些对话内容值得长期记住", "type": "paraphrase", "expect": ["你会如何判断一条历史信息该进入长期记忆，还是只留在当前会话里？", "跨会话记忆如何从对话中提取？哪些信息值得写入长期记忆？"]}
+{"query": "用户一会说这个一会说那个，前后矛盾信哪个", "type": "paraphrase", "expect": ["如果用户偏好、事实记忆、系统状态三者冲突了，Agent 应该信谁？", "记忆冲突怎么解决？比如用户前后说了不同的过敏信息"]}
+{"query": "记住的东西太久没更新过时了怎么办", "type": "paraphrase", "expect": ["如何处理记忆的“新鲜度”与“重要性”之间的冲突？"]}
+{"query": "插件和函数调用有什么区别，为什么还要多一层", "type": "paraphrase", "expect": ["Skills 是什么？为什么有了 MCP 和 Function Calling，还需要 Skills？"]}
+{"query": "工具一多提示词就爆了怎么办", "type": "paraphrase", "expect": ["工具多导致 token 数过多，怎么解决？"]}
+{"query": "一个功能到底是做成一个大工具还是拆成几个小的", "type": "paraphrase", "expect": ["同一个能力是做成“一个大而全工具”还是“多个小工具”，怎么权衡？"]}
+{"query": "怎么让模型乖乖输出 JSON 不乱写", "type": "paraphrase", "expect": ["如何让大模型从混乱的非结构化文档中稳定提取结构化 JSON？"]}
+{"query": "召回来的记忆跟当前问题其实没关系，污染了怎么办", "type": "paraphrase", "expect": ["长期记忆检索时，怎么避免把“语义相关但当前无用”的内容召回进来污染理解？"]}
+{"query": "模型回答的中间部分容易忘事", "type": "paraphrase", "expect": ["Lost in the Middle 问题是什么？有哪些解决方案？"]}
+{"query": "面试官问我 RAG 系统搜出来很多文档但回答还是很烂，该怎么排查", "type": "scenario", "expect": ["RAG 系统检索到的文档很多但回答质量差，怎么排查？"]}
+{"query": "面试官问我怎么给 RAG 的文档切块，不同切法有什么讲究", "type": "scenario", "expect": ["分块策略怎么设计？不同策略的优缺点？"]}
+{"query": "面试官追问我两路检索结果怎么合并排序", "type": "scenario", "expect": ["RRF（Reciprocal Rank Fusion）是什么？如何融合多路检索结果？", "笔试题：多路召回结果合并去重 + 加权排序 + TopK"]}
+{"query": "面试官问我 Embedding 模型怎么选", "type": "scenario", "expect": ["Embedding 模型怎么选？选型时考虑哪些因素？"]}
+{"query": "面试官问我项目里怎么权衡召回、重排和让 agent 自己规划", "type": "scenario", "expect": ["如果检索结果很多但质量参差不齐，你会把控制点放在召回、重排，还是 Agent 规划层？"]}
+{"query": "面试官问我长对话里怎么让 agent 不忘记关键信息", "type": "scenario", "expect": ["长上下文里，怎么让 Agent 不忘记关键信息？"]}
+{"query": "面试官让我设计一个三层记忆机制", "type": "scenario", "expect": ["如果让你设计一个三层记忆机制，你会如何设计？从整体架构和具体压缩方法进行描述。"]}
+{"query": "面试官问我摘要压缩什么时候触发、滑窗开多大", "type": "scenario", "expect": ["会话记忆具体是怎么实现的？滑动窗口设几轮？摘要压缩怎么触发？"]}
+{"query": "面试官问我 MCP 到底解决了什么问题", "type": "scenario", "expect": ["MCP 是什么？它解决了 Function Calling 的什么根本问题？"]}
+{"query": "面试官问我有了 MCP 为什么还要 Skills", "type": "scenario", "expect": ["Skills 是什么？为什么有了 MCP 和 Function Calling，还需要 Skills？", "为什么已经有了 MCP，Anthropic 还要做 Skill？Skill 里面有没有工具？"]}
+{"query": "面试官问我工具返回太大塞爆上下文怎么处理", "type": "scenario", "expect": ["工具返回了非常大的数据超出了大模型的上下文窗口，怎么办？"]}
+{"query": "面试官问我模型老是乱传参数怎么治", "type": "scenario", "expect": ["你会如何设计工具 schema，才能降低模型传错参数、漏参数、乱调用的问题？"]}
+{"query": "面试官问我 hook 应该拦在哪些阶段", "type": "scenario", "expect": ["Hooks 在 Agent 系统中应该拦截哪些阶段，和 Prompt 约束有什么区别？"]}
+{"query": "面试官问我 Function Calling 和 RAG 分别管什么", "type": "scenario", "expect": ["Function Calling 和 RAG 分别解决什么问题？如何配合使用？"]}
+{"query": "面试官问我什么是 Harness 工程", "type": "scenario", "expect": ["Harness Engineering 是什么？如果让你构建一个 Harness 体系，你会做哪些工作？", "Harness Engineering 是什么？它如何演进的？"]}
+{"query": "面试官问我提示词一般分哪几个部分", "type": "scenario", "expect": ["通常 Prompt 包含哪些结构？"]}
