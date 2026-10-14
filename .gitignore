@@ -11,3 +11,5 @@ dist/
 *.db-journal
 # 程序生成物：诊断报告
 报告*.md
+# 会话存档（含面试稿隐私）
+sessions/

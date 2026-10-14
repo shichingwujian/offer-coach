@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -30,20 +32,66 @@ def make_query_knowledge_base(db_path: Path) -> Callable[[str], str]:
     return query_knowledge_base
 
 
-_ANALYZE_PROMPT = """你是一位资深技术面试官。请按以下四个维度分析这段面试回答，每个维度给 1-5 分并引用原文做证据：
-1. 技术准确性 2. 结构化表达 3. 回答深度 4. 沟通清晰度
-最后给一段总评。"""
+# 四个评分维度（D10：记忆插件也认这几个名字，单一事实源）
+DIMENSIONS = ("技术准确性", "结构化表达", "回答深度", "沟通清晰度")
+
+_ANALYZE_PROMPT = """你是一位资深技术面试官。请按以下四个维度分析这段面试回答，每个维度给 1-5 分并引用原文做证据。
+
+严格只返回一个 JSON 对象（不要输出任何其他文字、不要用 markdown 围栏），格式：
+{"技术准确性": 3, "结构化表达": 4, "回答深度": 2, "沟通清晰度": 4,
+ "证据": {"技术准确性": "……", "结构化表达": "……", "回答深度": "……", "沟通清晰度": "……"},
+ "总评": "一段话总评"}"""
+
+
+def _parse_analysis(text: str) -> dict | None:
+    """从模型输出里挖出评分 JSON：剥围栏、找花括号。挖不到返回 None（失败当数据）。"""
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not all(dim in data for dim in DIMENSIONS):
+        return None
+    return data
+
+
+def _render_analysis(data: dict) -> str:
+    """把评分 JSON 渲染成可读文本。排版是确定性活，不烧钱给模型干（D4 原则）。
+
+    渲染格式固定（"技术准确性：2/5"）——D10 的记忆插件靠这个格式解析分数。
+    """
+    lines = ["## 四维评分", ""]
+    evidence = data.get("证据", {})
+    for dim in DIMENSIONS:
+        line = f"- {dim}：{data[dim]}/5"
+        if note := evidence.get(dim):
+            line += f" —— {note}"
+        lines.append(line)
+    if summary := data.get("总评"):
+        lines += ["", f"**总评**：{summary}"]
+    return "\n".join(lines)
 
 
 def make_analyze_content(engine: QueryEngine) -> Callable[[str], str]:
-    """工厂函数：造出一个"带着自己发动机"的 analyze_content 工具。"""
+    """工厂函数：造出一个"带着自己发动机"的 analyze_content 工具。
+
+    v2（D10）：输出从自由文本升级为"JSON 评分 + 确定性渲染"——
+    结构化结果才能被程序消费（记忆层、评估集都要读分数）。
+    模型没按格式返回时兜底返回原文（失败当数据）。
+    """
 
     def analyze_content(transcript: str) -> str:
         turn = engine.query([
             Message(role="system", content=_ANALYZE_PROMPT),
             Message(role="user", content=f"面试回答原文：\n{transcript}"),
         ])
-        return turn.message.content or "（模型未返回分析内容）"
+        text = turn.message.content or ""
+        data = _parse_analysis(text)
+        if data is None:
+            return text or "（模型未返回分析内容）"
+        return _render_analysis(data)
 
     return analyze_content
 
