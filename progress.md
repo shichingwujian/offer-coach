@@ -1,10 +1,10 @@
 # progress.md
 
-> **下次从这里开始：D11 收官 ✅（explain-back #9 通过，笔记 learning/09）→ D12 查询预处理（整句拆成关键词 OR，预期转述/场景破零）→ 开工前讲"拆词"概念**
+> **下次从这里开始：D12 收官 ✅（recall@5 37.0%→72.2%，见 eval/README.md）→ 考 D12（拆词三刀）+ 范读 → D13 混合召回（FTS5+向量，解决字面零重叠）**
 
 ## 当前阶段
 
-核心层 D1-D10 收官 ✅ → 深度冲刺中：D11 评估集+基线 ✅（81 测试全过）→ D12 查询预处理（拆词）→ D13 混合召回 → D14 消融
+核心层 D1-D10 收官 ✅ → 深度冲刺中：D11 评估集+基线 ✅ → D12 查询预处理 ✅（92 测试全过，recall@5 37.0%→72.2%）→ D13 混合召回 → D14 消融
 
 ## 进行中
 
@@ -23,6 +23,7 @@
 - D9：Hook+Command 落地 `hooks/pipeline.py`——pre/post 两排插孔（短路/逐级改写）、truncate_hook 实战插件、权限闸 as_hook() 改造为插件（适配器）、loop 内联闸门删除换管线、CLI chat REPL + 斜杠命令直达电梯；9 测试（累计 57）；笔记 learning/07（讲解版）
 - D10：Memory 层落地 `src/offer_coach/memory/`——MemoryStore（SQLite，confidence 坐实度 +0.1 封顶、access_count 召回计数、画像 patch 合并）、make_memory_hook（旁观型 post 插件：只看 analyze、只记 <3 分、解析不到宁可不记、同维度坐实不新增）、recall_block（开局召回：画像非空字段 + ≥0.6 弱点 + 最近 2 次摘要）、analyze 工具升级 v2（JSON 评分 + 确定性渲染 + 原文兜底）、diagnose 接线（剧本注入历史档案、跑成才记档）、CLI --memory + /profile /memory 命令；18 测试（累计 75）；笔记 learning/08（D007：死规则写入 + 只坐实不洗白）
 - D11：召回评估集落地 `eval/recall_set.jsonl`（54 条手写：keyword 20 / paraphrase 18 / scenario 16）+ `evaluation/recall.py`（run_recall 注入式检索函数，同一把尺子量不同策略）+ CLI `eval` 命令；**基线：recall@5 = 37.0%（keyword 100% / paraphrase 0% / scenario 0%）——漏网全是"无结果"，整句短语匹配是元凶**；6 测试（累计 81）；结果记录在 eval/README.md
+- D12：查询预处理落地 `knowledge/preprocess.py`（三刀拆词：标点切段→停词当刀→长段滑窗二字块，纯规则零依赖，D009 不引入 jieba）+ `search_smart`（每词各查合并：标题 2 分/正文 1 分、同分比最佳名次、每词 limit×4 进池；search_questions 基线一行不动）+ CLI `eval --mode phrase|terms`；**recall@5 = 72.2%（+35.2pp）：keyword 100% / paraphrase 33.3% / scenario 81.2%**；中途修了一次 keyword 回退（高频词 LIKE 池截断 → 加权+大池）；11 测试（累计 92）；D008（Transcript IR 预留 ASR 适配器话术）入决策日志
 
 ## 阻塞 / 问题
 
@@ -36,3 +37,4 @@
 - **评估集升级为两层（2026-10-13，读 Mini-dsh 简历后拍板，见 D006）**：① 召回评估（50+ 查询算 recall@5）② 机制消融（10-15 份埋雷面试稿，对照有无题库/导演剧本，算薄弱点命中率，每配置跑 2-3 次看方差）；灵感库存档：AbortController 式取消、JSONL 追加存档、80% 阈值自动摘要、Prompt Optimizer 插件（均 v2，现在不做）
 - **D10 v1 范围（2026-10-14 修正版）**：三种记忆全做——user_profile（弱项/分数/次数自动更新，岗位/技术栈可选自报）、weak_point（key 去重 + confidence 坐实）、diagnosis_summary；写入 = post 插件盯 analyze_content 低分维度；开局召回注入导演剧本（画像非空字段 + confidence≥0.6 弱点 + 最近 2 次摘要）。不做：expiresAt 过期（无短期记忆场景）、向量检索（归混合召回冲刺）、preference 类型（需模型判断写不写，垃圾桶风险，v1 只用死规则触发）
 - **简历话术锚点**：参照写"DeepSeek Harness '一切皆插'设计思想"，不写 Mini-dsh（同学项目，没分量易穿帮）；被追问"依赖校验/生命周期怎么没做" → 答"全总线对单人项目过重，两排插孔拿八成收益，有意识的取舍"
+- **灵感库新增（2026-10-14，朋友建议评审 + D12 讨论，均 v2 现在不做）**：jieba 专业分词（D12 升级点，见 D009）、统一 Transcript IR + ASR 适配器预留（见 D008，话术：不是"不做语音"是"预留适配器"）、口语文本分轮清洗、题库结构化 v2（评分点/追问链/标签/版本）、回放/A/B harness（做完才许上简历）、评分点召回率（D14 指标提法）

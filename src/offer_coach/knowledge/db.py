@@ -13,6 +13,7 @@ import sqlite3
 from pathlib import Path
 
 from offer_coach.knowledge.parser import Question, parse_file
+from offer_coach.knowledge.preprocess import extract_terms
 
 _SCHEMA = """
 CREATE VIRTUAL TABLE questions USING fts5(
@@ -72,3 +73,24 @@ def search_questions(db_path: Path, keyword: str, limit: int = 5) -> list[Questi
         return [Question(category=r[2], title=r[0], body=r[1]) for r in rows]
     finally:
         conn.close()
+
+
+def search_smart(db_path: Path, query: str, limit: int = 5) -> list[Question]:
+    """D12 拆词检索：拆词 → 每词各查一遍 → 按加权分合并排序（词与词是 OR 关系）。
+
+    合并规则：标题命中记 2 分、正文命中记 1 分（标题是题目主旨，权重高）；
+    同分比各自查询里的最佳名次。每词取 limit*4 条进合并池——
+    高频词（如"工具"）的 LIKE 池按写入顺序返回，池小了目标题可能压根没进池。
+    search_questions 本身一行不动——基线留着做对照。
+    """
+    terms = extract_terms(query)
+    if not terms:  # 整句全是废话词，没有肉
+        return []
+    hits: dict[str, list] = {}  # title -> [加权分, 最佳名次, Question]
+    for term in terms:
+        for rank, q in enumerate(search_questions(db_path, term, limit=limit * 4)):
+            entry = hits.setdefault(q.title, [0, rank, q])
+            entry[0] += 2 if term in q.title else 1
+            entry[1] = min(entry[1], rank)
+    ranked = sorted(hits.values(), key=lambda e: (-e[0], e[1]))
+    return [entry[2] for entry in ranked[:limit]]
