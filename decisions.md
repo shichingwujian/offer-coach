@@ -52,6 +52,15 @@
 - 不抄的：全插件总线（两孔插线板是规模合适的取舍，面试讲 trade-off）；coding agent 方向（不追广度）
 - 灵感库存档（v2 候选，现在不做）：AbortController 式取消、JSONL 追加式存档、80% 阈值自动摘要（D005 推迟项，Mini-dsh 给了参考设计）、Prompt Optimizer 插件
 
+## D010 | 2026-10-15 | 向量后端：本地 fastembed 为默认，API 为可插备选
+
+- 背景：D13 混合召回需要 embedding；用户手里只有 DeepSeek 和 Kimi 的 key，**两家都没有 embedding 接口**；走 API 需另注册（硅基流动有免费 embedding）
+- 选项：(a) 注册新 API（硅基流动）(b) 本地小模型 fastembed + bge-small-zh（约 100MB，首次下载）
+- 决定：(b) 本地为默认；`Embedder` 接口（Protocol）留好，API 实现随时可插
+- 理由：离线、免费、永远可复现——评估集是想跑就跑的尺子，不该依赖网络和外部账号；架构上接口抽象不变，故事反而是"向量后端可替换"（DI 第 7 次：FakeEmbedder 哈希向量跑测试，零联网）
+- 影响：`knowledge/embedder.py` 三件套（Embedder 协议 / FastEmbedder 懒加载真模型 / FakeEmbedder 测试）；向量存 SQLite BLOB（question_vecs 表）；`ingest --vectors` 建坐标，`eval --mode hybrid` 复测
+- 风险记录：首次下载走 HuggingFace，国内可能被墙 → 备案 `HF_ENDPOINT=https://hf-mirror.com`
+
 ## D008 | 2026-10-14 | 输入层预留统一 Transcript 结构 + ASR 适配器（录音不做，但架构留门）
 
 - 背景：外部建议（朋友评审）：录音转文字只是输入适配器，复盘质量才是核心；统一中间表示 `Transcript{turns:[{speaker,text}]}` 可让 ASR 后续零改动接入

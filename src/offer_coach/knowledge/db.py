@@ -2,6 +2,8 @@
 
 - build_db：遍历题库目录 → 解析 → 全量重建 FTS5 表（幂等：跑两遍结果一样）
 - search_questions：MATCH 翻倒排索引，按 rank 相关度排队
+- search_smart（D12）：拆词 → 每词各查 → 加权合并
+- build_vectors / search_vectors / search_hybrid（D13）：语义坐标 + RRF 融合
 
 FTS5 用 trigram 分词（3 字滑窗），解决中文没有空格、默认分词器切不动的问题。
 注意：trigram 要求关键词至少 3 个字符才能命中（"Redis"可以，"锁"不行）。
@@ -10,8 +12,10 @@ FTS5 用 trigram 分词（3 字滑窗），解决中文没有空格、默认分�
 from __future__ import annotations
 
 import sqlite3
+from array import array
 from pathlib import Path
 
+from offer_coach.knowledge.embedder import Embedder, cosine
 from offer_coach.knowledge.parser import Question, parse_file
 from offer_coach.knowledge.preprocess import extract_terms
 
@@ -94,3 +98,93 @@ def search_smart(db_path: Path, query: str, limit: int = 5) -> list[Question]:
             entry[1] = min(entry[1], rank)
     ranked = sorted(hits.values(), key=lambda e: (-e[0], e[1]))
     return [entry[2] for entry in ranked[:limit]]
+
+
+# ---------------- D13：向量召回（语义通道） ----------------
+
+_VEC_SCHEMA = """
+CREATE TABLE IF NOT EXISTS question_vecs(
+    title TEXT PRIMARY KEY,
+    embedding BLOB
+)
+"""
+
+
+def build_vectors(db_path: Path, embedder: Embedder) -> int:
+    """给题库每道题算语义坐标，存进 question_vecs 表（一次性，可重复跑）。
+
+    向量文本 = 标题 + 正文前 200 字：标题是主旨，正文前段给上下文。
+    向量存 BLOB（float32 数组字节），807 题 × 512 维 ≈ 1.6MB，毫秒级读出。
+    """
+    if not db_path.exists():
+        raise FileNotFoundError(f"题库不存在：{db_path}。请先运行 offer-coach ingest <题库目录>")
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(_VEC_SCHEMA)
+        conn.execute("DELETE FROM question_vecs")  # 全量重建，和 build_db 一样幂等
+        rows = conn.execute("SELECT title, body FROM questions").fetchall()
+        texts = [f"{title}\n{body[:200]}" for title, body in rows]
+        vectors = embedder.embed(texts)
+        for (title, _), vec in zip(rows, vectors):
+            conn.execute(
+                "INSERT INTO question_vecs (title, embedding) VALUES (?, ?)",
+                (title, array("f", vec).tobytes()),
+            )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def search_vectors(
+    db_path: Path, query: str, limit: int = 5, *, embedder: Embedder
+) -> list[Question]:
+    """语义通道：查询算坐标 → 和每道题的坐标比方向（余弦）→ 最像的排前面。
+
+    向量表不存在（没跑过 build_vectors）→ 返回空，让调用方退化成纯字面检索。
+    """
+    if not db_path.exists():
+        raise FileNotFoundError(f"题库不存在：{db_path}。请先运行 offer-coach ingest <题库目录>")
+    conn = sqlite3.connect(db_path)
+    try:
+        has_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='question_vecs'"
+        ).fetchone()
+        if not has_table:
+            return []  # 没建向量表：语义通道没货，不报错，静默退化
+        rows = conn.execute(
+            "SELECT q.title, q.body, q.category, v.embedding FROM questions q "
+            "JOIN question_vecs v ON v.title = q.title"
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return []
+    (q_vec,) = embedder.embed([query])
+    scored = []
+    for title, body, category, blob in rows:
+        vec = array("f")
+        vec.frombytes(blob)
+        scored.append((cosine(list(q_vec), list(vec)), Question(category=category, title=title, body=body)))
+    scored.sort(key=lambda e: -e[0])  # 余弦越大越像，降序
+    return [q for _, q in scored[:limit]]
+
+
+def search_hybrid(
+    db_path: Path, query: str, limit: int = 5, *, embedder: Embedder, k_rrf: int = 60
+) -> list[Question]:
+    """D13 混合召回：字面通道（拆词）+ 语义通道（向量）各查各的，RRF 融合。
+
+    RRF（倒数名次融合）：两路的分数是两种货币没法比大小，但名次可比——
+    每题得分 = Σ 1/(60 + 它在某榜的名次)。两榜都靠前的得分高，
+    只在一榜靠前的也能活下来。
+    """
+    lexical = search_smart(db_path, query, limit=limit * 2)
+    semantic = search_vectors(db_path, query, limit=limit * 2, embedder=embedder)
+    scores: dict[str, list] = {}  # title -> [RRF 得分, Question]
+    for board in (lexical, semantic):
+        for rank, q in enumerate(board):
+            entry = scores.setdefault(q.title, [0.0, q])
+            entry[0] += 1.0 / (k_rrf + rank + 1)
+    ranked = sorted(scores.values(), key=lambda e: -e[0])
+    return [entry[1] for entry in ranked[:limit]]

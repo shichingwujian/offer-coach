@@ -10,7 +10,7 @@ from offer_coach.context import ContextManager
 from offer_coach.engine import EngineConfig, Message, OpenAIProvider, QueryEngine, QueryEngineError
 from offer_coach.evaluation import format_report, load_eval_set, run_recall
 from offer_coach.hooks import HookPipeline, truncate_hook
-from offer_coach.knowledge.db import build_db, search_questions, search_smart
+from offer_coach.knowledge.db import build_db, build_vectors, search_hybrid, search_questions, search_smart
 from offer_coach.memory import MemoryStore, make_memory_hook, recall_block
 from offer_coach.permission import PermissionGate
 from offer_coach.skills import diagnose
@@ -37,10 +37,16 @@ def hello() -> None:
 def ingest(
     source: Path = typer.Argument(..., help="题库目录（含各分类子目录，每个里面有 index.md）"),
     db: Path = typer.Option(Path("questions.db"), help="输出的数据库文件路径"),
+    vectors: bool = typer.Option(False, "--vectors", help="同时建向量索引（D13 混合召回用；首次运行下载约 100MB 模型）"),
 ) -> None:
     """灌库：把 markdown 题库解析后灌进 SQLite（FTS5）。一次性动作，可重复跑。"""
     count = build_db(source, db)
     typer.echo(f"灌库完成：{count} 道题 → {db}")
+    if vectors:
+        from offer_coach.knowledge.embedder import FastEmbedder  # 懒加载：要了才下载模型
+
+        n = build_vectors(db, FastEmbedder())
+        typer.echo(f"向量索引完成：{n} 道题的语义坐标已入库")
 
 
 def diagnose_cmd(
@@ -90,17 +96,22 @@ def eval_cmd(
     eval_set: Path = typer.Option(Path("eval/recall_set.jsonl"), "--set", help="评估集路径（JSONL）"),
     db: Path = typer.Option(Path("questions.db"), help="题库数据库路径"),
     k: int = typer.Option(5, help="recall@k 的 k（前 k 个结果里命中即算中）"),
-    mode: str = typer.Option("phrase", help="检索模式：phrase=整句短语（基线）/ terms=拆词OR（D12）"),
+    mode: str = typer.Option("phrase", help="检索模式：phrase=整句短语（基线）/ terms=拆词OR（D12）/ hybrid=混合召回（D13）"),
 ) -> None:
     """召回评估：跑评估集出 recall@k。纯本地检索，零模型调用、零成本。"""
     cases = load_eval_set(eval_set)
-    # 注入被测的检索函数（同一接口换内脏：基线短语匹配 vs D12 拆词 OR）
+    # 注入被测的检索函数（同一接口换内脏：基线短语 vs D12 拆词 vs D13 混合召回）
     if mode == "phrase":
         search = lambda q: search_questions(db, q, limit=k)
     elif mode == "terms":
         search = lambda q: search_smart(db, q, limit=k)
+    elif mode == "hybrid":
+        from offer_coach.knowledge.embedder import FastEmbedder  # 懒加载：只有真跑混合才下载模型
+
+        embedder = FastEmbedder()
+        search = lambda q: search_hybrid(db, q, limit=k, embedder=embedder)
     else:
-        typer.echo(f"未知模式 {mode}，可选：phrase / terms", err=True)
+        typer.echo(f"未知模式 {mode}，可选：phrase / terms / hybrid", err=True)
         raise typer.Exit(code=1)
     report = run_recall(cases, search, k=k)
     typer.echo(f"检索模式：{mode}")

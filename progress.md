@@ -1,10 +1,10 @@
 # progress.md
 
-> **下次从这里开始：D12 收官 ✅（recall@5 37.0%→72.2%，见 eval/README.md）→ 考 D12（拆词三刀）+ 范读 → D13 混合召回（FTS5+向量，解决字面零重叠）**
+> **下次从这里开始：D13 收官 ✅（hybrid recall@5=79.6%，见 eval/README.md）→ 考 D13（embedding/余弦/RRF）+ 范读 → D14 机制消融（埋雷稿，最后一战）**
 
 ## 当前阶段
 
-核心层 D1-D10 收官 ✅ → 深度冲刺中：D11 评估集+基线 ✅ → D12 查询预处理 ✅（92 测试全过，recall@5 37.0%→72.2%）→ D13 混合召回 → D14 消融
+核心层 D1-D10 收官 ✅ → 深度冲刺中：D11 评估集+基线 ✅ → D12 查询预处理 ✅ → D13 混合召回 ✅（102 测试全过，recall@5 37.0%→72.2%→79.6%）→ D14 消融（最后一战）
 
 ## 进行中
 
@@ -24,6 +24,7 @@
 - D10：Memory 层落地 `src/offer_coach/memory/`——MemoryStore（SQLite，confidence 坐实度 +0.1 封顶、access_count 召回计数、画像 patch 合并）、make_memory_hook（旁观型 post 插件：只看 analyze、只记 <3 分、解析不到宁可不记、同维度坐实不新增）、recall_block（开局召回：画像非空字段 + ≥0.6 弱点 + 最近 2 次摘要）、analyze 工具升级 v2（JSON 评分 + 确定性渲染 + 原文兜底）、diagnose 接线（剧本注入历史档案、跑成才记档）、CLI --memory + /profile /memory 命令；18 测试（累计 75）；笔记 learning/08（D007：死规则写入 + 只坐实不洗白）
 - D11：召回评估集落地 `eval/recall_set.jsonl`（54 条手写：keyword 20 / paraphrase 18 / scenario 16）+ `evaluation/recall.py`（run_recall 注入式检索函数，同一把尺子量不同策略）+ CLI `eval` 命令；**基线：recall@5 = 37.0%（keyword 100% / paraphrase 0% / scenario 0%）——漏网全是"无结果"，整句短语匹配是元凶**；6 测试（累计 81）；结果记录在 eval/README.md
 - D12：查询预处理落地 `knowledge/preprocess.py`（三刀拆词：标点切段→停词当刀→长段滑窗二字块，纯规则零依赖，D009 不引入 jieba）+ `search_smart`（每词各查合并：标题 2 分/正文 1 分、同分比最佳名次、每词 limit×4 进池；search_questions 基线一行不动）+ CLI `eval --mode phrase|terms`；**recall@5 = 72.2%（+35.2pp）：keyword 100% / paraphrase 33.3% / scenario 81.2%**；中途修了一次 keyword 回退（高频词 LIKE 池截断 → 加权+大池）；11 测试（累计 92）；D008（Transcript IR 预留 ASR 适配器话术）入决策日志
+- D13：混合召回落地 `knowledge/embedder.py`（Embedder 协议 + FastEmbedder 懒加载 bge-small-zh 512 维本地模型 + FakeEmbedder 哈希假向量，DI 第 7 次）+ db.py 三件套（build_vectors 坐标入库 BLOB / search_vectors 余弦排序 / search_hybrid **RRF 按名次融合**——两路分数是两种货币没法比，名次可比）+ CLI `--mode hybrid` + `ingest --vectors`；**recall@5 = 79.6%（keyword 100% / paraphrase 55.6% / scenario 81.2%）**；插曲：HF 被墙 → hf-mirror 镜像 16 秒解决（D010 风险备案命中）；剩余 11 条漏网是 bge-small 拉不动的最深语义鸿沟（v2：bge-m3/reranker/同义词）；10 测试（累计 102）
 
 ## 阻塞 / 问题
 
