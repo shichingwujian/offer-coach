@@ -36,6 +36,10 @@ class ToolRegistry:
     def register(self, tool: ToolDef) -> None:
         self._tools[tool.name] = tool
 
+    def unregister(self, name: str) -> None:
+        """摘掉一个工具（D14 消融对照组用：no-kb 配置没收检索工具）。"""
+        self._tools.pop(name, None)
+
     def get(self, name: str) -> ToolDef | None:
         return self._tools.get(name)
 

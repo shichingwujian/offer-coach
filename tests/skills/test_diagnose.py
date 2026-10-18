@@ -77,8 +77,12 @@ class TestDiagnose:
             FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id=f"c{i}")
             for i in range(3)
         ])
-        with pytest.raises(RuntimeError, match="stuck"):
+        with pytest.raises(RuntimeError, match="stuck") as exc_info:
             diagnose(transcript, engine, db)
+        message = str(exc_info.value)
+        assert "3 轮" in message
+        assert message.count("query_knowledge_base") == 3
+        assert '{"keyword": "Redis"}' in message
 
     def test_ledger_records_real_cost(self, stage: tuple[Path, Path]) -> None:
         """账本：跑完诊断，engine.ledger 里一定有花销记录（总闸逃不掉票）。"""

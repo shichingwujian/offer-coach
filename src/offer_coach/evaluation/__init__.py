@@ -1,5 +1,18 @@
-"""evaluation 包统一出口：评估集与召回评测。"""
+"""evaluation 包统一出口：评估集与召回评测 + 机制消融。"""
 
+from offer_coach.evaluation.ablation import (
+    CONFIGS,
+    AblationCase,
+    JudgeFn,
+    Mine,
+    RunFn,
+    RunResult,
+    format_ablation,
+    load_mines,
+    make_judge,
+    run_ablation,
+    write_run_log,
+)
 from offer_coach.evaluation.recall import (
     CaseResult,
     EvalCase,
@@ -11,11 +24,22 @@ from offer_coach.evaluation.recall import (
 )
 
 __all__ = [
+    "CONFIGS",
+    "AblationCase",
     "CaseResult",
     "EvalCase",
     "EvalReport",
+    "Mine",
+    "RunResult",
     "SearchFn",
+    "format_ablation",
     "format_report",
     "load_eval_set",
+    "load_mines",
+    "run_ablation",
     "run_recall",
+    "JudgeFn",
+    "RunFn",
+    "make_judge",
+    "write_run_log",
 ]

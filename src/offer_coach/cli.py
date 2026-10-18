@@ -8,7 +8,16 @@ from dotenv import load_dotenv
 
 from offer_coach.context import ContextManager
 from offer_coach.engine import EngineConfig, Message, OpenAIProvider, QueryEngine, QueryEngineError
-from offer_coach.evaluation import format_report, load_eval_set, run_recall
+from offer_coach.evaluation import (
+    format_ablation,
+    format_report,
+    load_eval_set,
+    load_mines,
+    make_judge,
+    run_ablation,
+    run_recall,
+    write_run_log,
+)
 from offer_coach.hooks import HookPipeline, truncate_hook
 from offer_coach.knowledge.db import build_db, build_vectors, search_hybrid, search_questions, search_smart
 from offer_coach.memory import MemoryStore, make_memory_hook, recall_block
@@ -116,6 +125,39 @@ def eval_cmd(
     report = run_recall(cases, search, k=k)
     typer.echo(f"检索模式：{mode}")
     typer.echo(format_report(report))
+
+
+@app.command()
+def ablate(
+    mines: Path = typer.Option(Path("eval/ablation/mines.jsonl"), help="雷区地图（JSONL）"),
+    transcripts_dir: Path = typer.Option(Path("eval/ablation"), help="埋雷稿目录"),
+    db: Path = typer.Option(Path("questions.db"), help="题库数据库路径"),
+    runs: int = typer.Option(2, help="每个配置每份稿跑几遍（看方差，LLM 有随机性）"),
+    configs: str = typer.Option("full,no-kb,no-script", help="对照组，逗号分隔"),
+    log: Path = typer.Option(Path("eval/ablation/run-log.jsonl"), "--log", help="逐次运行记录（JSONL，每次实验覆盖）"),
+) -> None:
+    """机制消融：对照有无题库/剧本，算薄弱点命中率。真调模型（诊断+裁判），会花钱。"""
+    try:
+        provider = OpenAIProvider.from_env()
+    except QueryEngineError as e:
+        typer.echo(f"环境未配置：{e}", err=True)
+        raise typer.Exit(code=1) from e
+    engine = QueryEngine(EngineConfig(provider=provider))
+    cases = load_mines(mines)
+    selected = tuple(c.strip() for c in configs.split(","))
+
+    def run_fn(transcript_name: str, config: str) -> str:
+        # 消融实验不开权限闸（工具全是只读的，36 次确认没人受得了）不写记忆（实验不污染档案）
+        return diagnose(
+            transcripts_dir / transcript_name, engine, db,
+            ablate_kb=config == "no-kb", ablate_script=config == "no-script",
+        )
+
+    results = run_ablation(cases, run_fn, judge_fn=make_judge(engine), configs=selected, runs=runs)
+    write_run_log(results, log)
+    typer.echo(format_ablation(results))
+    typer.echo(f"\n逐次记录：{log}（含报告原文、漏网雷和翻车原因）")
+    typer.echo(f"\n总账单：{engine.usage_summary()}")
 
 
 _PROFILE_KEYS = {"岗位": "target_role", "技术栈": "tech_stack"}

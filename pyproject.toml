@@ -17,6 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# 可选：D13 本地向量召回与混合检索评估；主流程和离线测试不需要
+vectors = ["fastembed>=0.9"]
 
 [project.scripts]
 offer-coach = "offer_coach.cli:app"

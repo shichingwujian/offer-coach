@@ -35,6 +35,18 @@ _MEMORY_WRAP = """
 {block}
 请在诊断中结合历史：老弱点是否改善、哪些维度反复出问题。"""
 
+# D14 消融对照组 no-script：只剩身份，没有流程——测"导演剧本"这层机制值多少
+_BARE_SCRIPT = "你是一位资深技术面试官。请阅读候选人的面试稿，评估其回答质量，并给出你的诊断。"
+
+# D14 消融对照组 no-kb：剧本改成两步，不提检索——测"题库弹药"这层机制值多少
+_SCRIPT_NO_KB = """你是一位资深技术面试官，正在为候选人做面试诊断。
+
+你手头有两个工具，请按以下流程工作：
+1. 用 analyze_content 分析候选人的回答质量（四个维度打分）
+2. 用 generate_report 把分析结果排版成最终诊断报告
+
+完成后，直接输出报告全文作为你的最终回答。"""
+
 
 def diagnose(
     transcript_path: Path,
@@ -46,13 +58,20 @@ def diagnose(
     session_path: Path | None = None,  # 可选：跑完把历史存到这个档案（D8）
     resume: bool = False,  # True 时忽略稿子，从 session_path 读档续跑
     memory: MemoryStore | None = None,  # 可选：档案柜（D10）。传了就开局召回 + 跑完记档
+    ablate_kb: bool = False,  # D14 消融对照组：没收题库工具（剧本同步改两步）
+    ablate_script: bool = False,  # D14 消融对照组：摘掉导演剧本（只留身份）
 ) -> str:
     """诊断一份面试稿，返回报告文本。模型的账单在 engine.ledger 里。"""
     if resume and session_path is not None:
         messages = load_session(session_path)  # 读档：接着上次的历史继续
     else:
         transcript = transcript_path.read_text(encoding="utf-8")
-        script = _DIRECTOR_SCRIPT
+        if ablate_script:
+            script = _BARE_SCRIPT
+        elif ablate_kb:
+            script = _SCRIPT_NO_KB
+        else:
+            script = _DIRECTOR_SCRIPT
         if memory is not None:
             block = recall_block(memory)  # 开局召回：抽几份档案摆上桌
             if block:
@@ -62,6 +81,8 @@ def diagnose(
             Message(role="user", content=f"这是候选人的面试稿，请诊断：\n\n{transcript}"),
         ]
     registry = default_registry(engine, db_path)
+    if ablate_kb:
+        registry.unregister("query_knowledge_base")  # 消融：没收检索工具
     # 插线板装配（D9）：权限闸插 pre 孔；档案员和结果压缩插 post 孔（D10）
     # 顺序有意义：档案员先看完整原文，截断殿后只影响喂给模型的副本
     pipeline = HookPipeline()
@@ -81,10 +102,32 @@ def diagnose(
     if session_path is not None:
         save_session(session_path, result.messages)  # 存档：中断也能续跑
     if result.status != "completed":
-        raise RuntimeError(f"诊断未完成（{result.status}）：模型没有走完流程，请重试")
+        trace = _format_tool_trace(result.messages)
+        raise RuntimeError(
+            f"诊断未完成（{result.status}，{result.iterations} 轮）："
+            f"模型没有走完流程，请重试；工具轨迹：{trace}"
+        )
     if memory is not None:
         _write_summary(memory, transcript_path, result.final_text or "")  # 跑成才记档
     return result.final_text or ""
+
+
+def _format_tool_trace(messages: list[Message], *, max_actions: int = 12) -> str:
+    """把循环里的工具订单压成短轨迹，供失败日志定位；长参数截断，避免错误信息爆炸。"""
+    actions = []
+    for message in messages:
+        if message.role != "assistant" or not message.tool_calls:
+            continue
+        for call in message.tool_calls:
+            args = " ".join(call.arguments.split())
+            if len(args) > 120:
+                args = args[:117] + "..."
+            actions.append(f"{call.name}({args})")
+    if not actions:
+        return "无工具调用"
+    if len(actions) > max_actions:
+        actions = ["..."] + actions[-max_actions:]
+    return " -> ".join(actions)
 
 
 def _write_summary(store: MemoryStore, transcript_path: Path, report: str) -> None:

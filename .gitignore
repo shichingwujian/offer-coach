@@ -13,3 +13,8 @@ dist/
 报告*.md
 # 会话存档（含面试稿隐私）
 sessions/
+# 消融真机运行日志（含模型输出，仅保留本地实验现场）
+eval/ablation/run-log.jsonl
+eval/ablation/full-debug.jsonl
+# 个人复习卡（记录个人学习痕迹，不作为项目文档发布）
+learning/00-review-cards.md
