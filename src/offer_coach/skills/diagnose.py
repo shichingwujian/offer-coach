@@ -17,7 +17,7 @@ from offer_coach.memory import MemoryStore, make_memory_hook, recall_block
 from offer_coach.permission.gate import PermissionGate
 from offer_coach.session import load_session, save_session
 from offer_coach.tools.builtin import default_registry
-from offer_coach.tools.loop import TurnTrace, run_loop
+from offer_coach.tools.loop import ToolBudget, TurnTrace, run_loop
 
 _DIRECTOR_SCRIPT = """你是一位资深技术面试官，正在为候选人做面试诊断。
 
@@ -54,6 +54,8 @@ def diagnose(
     db_path: Path,
     *,
     max_iterations: int = 10,
+    max_tool_calls: int | None = 8,  # P0-2 总工具声明预算：正常三步流程只用 3 次
+    max_kb_calls: int | None = 3,  # P0-2 单项检索预算：防长稿里反复查询题库
     gate: PermissionGate | None = None,  # 可选：权限闸门（D8）
     session_path: Path | None = None,  # 可选：跑完把历史存到这个档案（D8）
     resume: bool = False,  # True 时忽略稿子，从 session_path 读档续跑
@@ -98,6 +100,10 @@ def diagnose(
         max_iterations=max_iterations,
         context=ContextManager(),  # D7：桌面管理，防多轮诊断历史膨胀
         hooks=pipeline,
+        budget=ToolBudget(
+            max_total_calls=max_tool_calls,
+            max_calls_by_tool={"query_knowledge_base": max_kb_calls} if max_kb_calls is not None else {},
+        ),
     )
     if session_path is not None:
         save_session(session_path, result.messages)  # 存档：中断也能续跑
@@ -117,13 +123,16 @@ def _format_tool_trace(trace: list[TurnTrace], *, max_actions: int = 12) -> str:
     actions = []
     for turn in trace:
         if not turn.tool_traces:
-            actions.append(f"第{turn.iteration}轮(stop={turn.stop_reason})：无工具调用")
+            actions.append(f"第{turn.iteration}轮(mode={turn.mode}, stop={turn.stop_reason})：无工具调用")
         for call in turn.tool_traces:
             args = " ".join(call.arguments.split())
             if len(args) > 120:
                 args = args[:117] + "..."
             if call.outcome == "duplicate":
                 detail = f"duplicate（同参数第{call.repeat_count}次，未执行）"
+            elif call.outcome == "budget_exceeded":
+                scope = "总预算" if call.budget_scope == "total" else "单项预算"
+                detail = f"budget_exceeded（{scope}，未执行，{call.result_chars}字）"
             else:
                 detail = f"{call.outcome}，{call.result_chars}字"
                 if call.truncated:
@@ -131,7 +140,7 @@ def _format_tool_trace(trace: list[TurnTrace], *, max_actions: int = 12) -> str:
                 if call.result_preview:
                     detail += f"，预览：{call.result_preview}"
             actions.append(
-                f"第{turn.iteration}轮(stop={turn.stop_reason}) "
+                f"第{turn.iteration}轮(mode={turn.mode}, stop={turn.stop_reason}) "
                 f"{call.name}({args}) -> {detail}"
             )
     if not actions:

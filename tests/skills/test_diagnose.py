@@ -64,6 +64,21 @@ class TestDiagnose:
         assert "面试诊断报告" in report
         assert len(provider.calls) == 4  # 三次下单 + 一次终答
 
+    def test_kb_budget_adds_receipt_then_finalizes(self, stage: tuple[Path, Path]) -> None:
+        """检索预算耗尽：第二次查库不执行，补回执后让模型基于已有材料收尾。"""
+        transcript, db = stage
+        engine, provider = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "持久化"}', call_id="c2"),
+            FakeProvider.text_turn("# 面试诊断报告\n\n基于已有材料收尾"),
+        ])
+
+        report = diagnose(transcript, engine, db, max_kb_calls=1)
+
+        assert "基于已有材料收尾" in report
+        assert len(provider.calls) == 3  # 两次正常轮 + 一次无工具收尾轮
+        assert "调用预算已耗尽" in (provider.calls[-1][-1].content or "")
+
     def test_model_may_answer_directly(self, stage: tuple[Path, Path]) -> None:
         """模型有权偷懒：不下单直接答，也算 completed。"""
         transcript, db = stage
@@ -85,7 +100,7 @@ class TestDiagnose:
         assert '{"keyword": "Redis"}' in message
         assert "success" in message
         assert "duplicate（同参数第3次，未执行）" in message
-        assert "第3轮(stop=tool_use)" in message
+        assert "第3轮(mode=normal, stop=tool_use)" in message
 
     def test_ledger_records_real_cost(self, stage: tuple[Path, Path]) -> None:
         """账本：跑完诊断，engine.ledger 里一定有花销记录（总闸逃不掉票）。"""

@@ -21,6 +21,7 @@ from offer_coach.engine import (
 from offer_coach.hooks import HookPipeline, truncate_hook
 from offer_coach.knowledge import build_db
 from offer_coach.tools import (
+    ToolBudget,
     ToolDef,
     ToolRegistry,
     default_registry,
@@ -233,3 +234,104 @@ class TestRunLoop:
         assert tool_trace.truncated is True
         assert tool_trace.result_chars == len(result.messages[2].content or "")
         assert "已截断" in tool_trace.result_preview
+
+    def test_total_budget_adds_receipt_and_finalizes(self, kb_db: Path) -> None:
+        engine, provider = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.tool_turn("generate_report", '{"analysis": "已有分析"}', call_id="c2"),
+            FakeProvider.text_turn("基于已有材料收尾。"),
+        ])
+
+        result = run_loop(
+            engine,
+            default_registry(engine, kb_db),
+            USER_ASK,
+            budget=ToolBudget(max_total_calls=1),
+        )
+
+        assert result.status == "completed"
+        assert result.iterations == 3  # 第2轮超预算，第3轮是无工具收尾
+        assert result.trace[0].tool_traces[0].outcome == "success"
+        budget_trace = result.trace[1].tool_traces[0]
+        assert budget_trace.outcome == "budget_exceeded"
+        assert budget_trace.budget_scope == "total"
+        assert budget_trace.repeat_count == 1
+        assert result.trace[2].mode == "finalize"
+        receipt = result.messages[4]
+        assert receipt.tool_call_id == "c2"
+        assert "预算已耗尽" in (receipt.content or "")
+        assert provider.calls[-1][-1].tool_call_id == "c2"  # 收尾前已补回执
+
+    def test_per_tool_budget_adds_receipt_and_finalizes(self, kb_db: Path) -> None:
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "持久化"}', call_id="c2"),
+            FakeProvider.text_turn("不再查库，直接收尾。"),
+        ])
+
+        result = run_loop(
+            engine,
+            default_registry(engine, kb_db),
+            USER_ASK,
+            budget=ToolBudget(max_calls_by_tool={"query_knowledge_base": 1}),
+        )
+
+        assert result.status == "completed"
+        budget_trace = result.trace[1].tool_traces[0]
+        assert budget_trace.outcome == "budget_exceeded"
+        assert budget_trace.budget_scope == "tool"
+
+    def test_budget_exhaustion_at_last_iteration_still_gets_finalize_turn(self, kb_db: Path) -> None:
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.text_turn("最后收尾。"),
+        ])
+
+        result = run_loop(
+            engine,
+            default_registry(engine, kb_db),
+            USER_ASK,
+            max_iterations=1,
+            budget=ToolBudget(max_total_calls=0),
+        )
+
+        assert result.status == "completed"
+        assert result.iterations == 2  # 收尾轮是正常轮数之外的最后一次无工具调用
+        assert [turn.mode for turn in result.trace] == ["normal", "finalize"]
+
+    def test_finalize_turn_requesting_tool_fails_safely(self, kb_db: Path) -> None:
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.tool_turn("generate_report", '{"analysis": "已有分析"}', call_id="c2"),
+        ])
+
+        result = run_loop(
+            engine,
+            default_registry(engine, kb_db),
+            USER_ASK,
+            budget=ToolBudget(max_total_calls=0),
+        )
+
+        assert result.status == "tool_budget_exceeded"
+        final_trace = result.trace[-1].tool_traces[0]
+        assert final_trace.outcome == "budget_exceeded"
+        assert result.messages[-1].role == "tool"  # 收尾轮的订单也补了回执
+        assert result.messages[-1].tool_call_id == "c2"
+
+    def test_failed_tool_call_still_counts_toward_budget(self, kb_db: Path) -> None:
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("nonexistent_tool", "{}", call_id="c1"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c2"),
+            FakeProvider.text_turn("工具失败后也按预算收尾。"),
+        ])
+
+        result = run_loop(
+            engine,
+            default_registry(engine, kb_db),
+            USER_ASK,
+            budget=ToolBudget(max_total_calls=1),
+        )
+
+        assert result.status == "completed"
+        assert result.trace[0].tool_traces[0].outcome == "error"
+        assert result.trace[1].tool_traces[0].outcome == "budget_exceeded"

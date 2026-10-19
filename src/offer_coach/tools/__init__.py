@@ -6,12 +6,13 @@ from offer_coach.tools.builtin import (
     make_analyze_content,
     make_query_knowledge_base,
 )
-from offer_coach.tools.loop import LoopResult, LoopStatus, run_loop
+from offer_coach.tools.loop import LoopResult, LoopStatus, ToolBudget, run_loop
 from offer_coach.tools.registry import ToolDef, ToolRegistry, execute_tool
 
 __all__ = [
     "LoopResult",
     "LoopStatus",
+    "ToolBudget",
     "ToolDef",
     "ToolRegistry",
     "default_registry",

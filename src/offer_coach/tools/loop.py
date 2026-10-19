@@ -2,6 +2,7 @@
 
 一次循环 = 调模型 → 先记录 assistant 消息 → 有订单就执行工具、结果挂回历史 → 再调。
 退出条件：模型不再下单（completed）/ 同一动作重复 3 次（stuck）/ 轮数耗尽（max_iterations）。
+P0-2 增加工具声明预算：超预算后补工具回执，并给模型一轮无工具收尾机会。
 """
 
 from __future__ import annotations
@@ -14,12 +15,23 @@ from pydantic import BaseModel, Field
 
 from offer_coach.context.manager import ContextManager
 from offer_coach.engine.engine import QueryEngine
-from offer_coach.engine.models import Message
+from offer_coach.engine.models import Message, ToolCall
 from offer_coach.hooks.pipeline import HookPipeline
 from offer_coach.tools.registry import ToolRegistry, execute_tool
 
-LoopStatus = Literal["completed", "stuck", "max_iterations"]
-ToolOutcome = Literal["success", "empty", "error", "blocked", "duplicate"]
+LoopStatus = Literal["completed", "stuck", "max_iterations", "tool_budget_exceeded"]
+ToolOutcome = Literal[
+    "success", "empty", "error", "blocked", "duplicate", "budget_exceeded"
+]
+TurnMode = Literal["normal", "finalize"]
+BudgetScope = Literal["total", "tool"]
+
+
+class ToolBudget(BaseModel):
+    """工具声明预算：按模型下单计数，不按工具成功次数计数。"""
+
+    max_total_calls: int | None = None
+    max_calls_by_tool: dict[str, int] = Field(default_factory=dict)
 
 
 class ToolTrace(BaseModel):
@@ -33,6 +45,7 @@ class ToolTrace(BaseModel):
     result_chars: int = 0
     truncated: bool = False
     result_preview: str = ""
+    budget_scope: BudgetScope | None = None
 
 
 class TurnTrace(BaseModel):
@@ -41,6 +54,7 @@ class TurnTrace(BaseModel):
     iteration: int
     stop_reason: str
     request_id: str | None = None
+    mode: TurnMode = "normal"
     tool_traces: list[ToolTrace] = Field(default_factory=list)
 
 
@@ -62,9 +76,12 @@ def run_loop(
     max_repeats: int = 3,
     context: ContextManager | None = None,  # 可选：传了就每次调模型前裁剪历史（D7）
     hooks: HookPipeline | None = None,  # 可选：治理插件管线（D8 权限闸已改造为插件，D9）
+    budget: ToolBudget | None = None,  # 可选：工具声明预算，耗尽后追加一轮无工具收尾
 ) -> LoopResult:
     history = list(messages)
     fingerprints: Counter[tuple[str, str]] = Counter()  # 动作指纹 = 工具名+参数（不含 call_id）
+    tool_declarations: Counter[str] = Counter()
+    total_declarations = 0
     trace: list[TurnTrace] = []
 
     for iteration in range(1, max_iterations + 1):
@@ -85,7 +102,7 @@ def run_loop(
         if not assistant.tool_calls:
             return LoopResult("completed", history, assistant.content, iteration, trace)
 
-        for call in assistant.tool_calls:
+        for call_index, call in enumerate(assistant.tool_calls):
             fp = (call.name, call.arguments)
             fingerprints[fp] += 1
             repeat_count = fingerprints[fp]
@@ -99,6 +116,34 @@ def run_loop(
                     outcome="duplicate",
                 ))
                 return LoopResult("stuck", history, None, iteration, trace)
+
+            if budget is not None:
+                budget_scope = _budget_scope(
+                    budget,
+                    tool_name=call.name,
+                    next_total=total_declarations + 1,
+                    next_tool_count=tool_declarations[call.name] + 1,
+                )
+                if budget_scope is not None:
+                    # 超预算的当前订单及同一轮后续订单都补回执，保证订单/回执成对
+                    _record_budget_exceeded_calls(
+                        turn_trace,
+                        history,
+                        assistant.tool_calls[call_index:],
+                        fingerprints,
+                        budget_scope,
+                        first_already_counted=True,
+                    )
+                    return _finalize_once(
+                        engine,
+                        history,
+                        trace,
+                        iteration + 1,
+                        context,
+                        fingerprints,
+                    )
+                tool_declarations[call.name] += 1
+                total_declarations += 1
 
             check_truncation = False
             if hooks is not None:
@@ -131,6 +176,89 @@ def run_loop(
             history.append(Message(role="tool", tool_call_id=call.id, content=result))
 
     return LoopResult("max_iterations", history, None, max_iterations, trace)
+
+
+def _budget_scope(
+    budget: ToolBudget,
+    *,
+    tool_name: str,
+    next_total: int,
+    next_tool_count: int,
+) -> BudgetScope | None:
+    """在声明入正式计数前预判：总预算优先，其次才是单项工具预算。"""
+    if budget.max_total_calls is not None and next_total > budget.max_total_calls:
+        return "total"
+    tool_limit = budget.max_calls_by_tool.get(tool_name)
+    if tool_limit is not None and next_tool_count > tool_limit:
+        return "tool"
+    return None
+
+
+def _record_budget_exceeded_calls(
+    turn_trace: TurnTrace,
+    history: list[Message],
+    calls: list[ToolCall],
+    fingerprints: Counter[tuple[str, str]],
+    scope: BudgetScope,
+    *,
+    first_already_counted: bool = False,
+) -> None:
+    """给未执行订单补回执；没有回执的历史不能让模型继续收尾。"""
+    for index, call in enumerate(calls):
+        fp = (call.name, call.arguments)
+        if index > 0 or not first_already_counted:
+            fingerprints[fp] += 1
+        receipt = _budget_receipt(scope)
+        turn_trace.tool_traces.append(ToolTrace(
+            call_id=call.id,
+            name=call.name,
+            arguments=call.arguments,
+            repeat_count=fingerprints[fp],
+            outcome="budget_exceeded",
+            result_chars=len(receipt),
+            result_preview=_result_preview(receipt),
+            budget_scope=scope,
+        ))
+        history.append(Message(role="tool", tool_call_id=call.id, content=receipt))
+
+
+def _budget_receipt(scope: BudgetScope) -> str:
+    if scope == "total":
+        return "错误：总工具调用预算已耗尽，请基于已有信息直接收尾，不要再调用工具。"
+    return "错误：单项工具调用预算已耗尽，请基于已有信息直接收尾，不要再调用工具。"
+
+
+def _finalize_once(
+    engine: QueryEngine,
+    history: list[Message],
+    trace: list[TurnTrace],
+    iteration: int,
+    context: ContextManager | None,
+    fingerprints: Counter[tuple[str, str]],
+) -> LoopResult:
+    """预算耗尽后的最后一次模型调用：不给工具菜单，只允许直接回答。"""
+    outbound = context.fit(history) if context is not None else history
+    turn = engine.query(outbound, tools=[])
+    assistant = turn.message
+    turn_trace = TurnTrace(
+        iteration=iteration,
+        stop_reason=turn.stop_reason,
+        request_id=turn.request_id,
+        mode="finalize",
+    )
+    trace.append(turn_trace)
+    history.append(assistant)
+
+    if assistant.tool_calls:
+        _record_budget_exceeded_calls(
+            turn_trace,
+            history,
+            assistant.tool_calls,
+            fingerprints,
+            "total",
+        )
+        return LoopResult("tool_budget_exceeded", history, None, iteration, trace)
+    return LoopResult("completed", history, assistant.content, iteration, trace)
 
 
 def _classify_tool_result(result: str) -> ToolOutcome:
