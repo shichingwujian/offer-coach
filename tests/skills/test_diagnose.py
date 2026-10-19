@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
-from offer_coach.engine import EngineConfig, FakeProvider, QueryEngine, RetryConfig
+from offer_coach.engine import EngineConfig, FakeProvider, QueryEngine, QueryEngineError, RetryConfig
 from offer_coach.knowledge import build_db
-from offer_coach.skills import diagnose
+from offer_coach.skills import diagnose, diagnose_run
 
 
 def no_sleep(_seconds: float) -> None:
@@ -95,12 +95,106 @@ class TestDiagnose:
         with pytest.raises(RuntimeError, match="stuck") as exc_info:
             diagnose(transcript, engine, db)
         message = str(exc_info.value)
+        assert "degraded" in message
+        assert "stuck" in message
         assert "3 轮" in message
         assert message.count("query_knowledge_base") == 3
         assert '{"keyword": "Redis"}' in message
         assert "success" in message
         assert "duplicate（同参数第3次，未执行）" in message
         assert "第3轮(mode=normal, stop=tool_use)" in message
+
+    def test_stuck_with_successful_material_returns_degraded(self, stage: tuple[Path, Path]) -> None:
+        """stuck 不是 failed：前面成功查到的题库材料要保留成不完整报告。"""
+        transcript, db = stage
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id=f"c{i}")
+            for i in range(3)
+        ])
+
+        result = diagnose_run(transcript, engine, db)
+
+        assert result.status == "degraded"
+        assert result.loop_status == "stuck"
+        assert result.iterations == 3
+        assert "面试诊断报告（不完整）" in result.report
+        assert "RDB 快照和 AOF 日志" in result.report
+        assert "duplicate（同参数第3次，未执行）" in result.report
+        assert "stuck" in (result.reason or "")
+
+    def test_finalize_requesting_tool_with_material_returns_degraded(self, stage: tuple[Path, Path]) -> None:
+        """收尾轮仍下单：loop 失败，但第一张成功检索回执仍能降级保留。"""
+        transcript, db = stage
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.tool_turn("generate_report", '{"analysis": "已有分析"}', call_id="c2"),
+            FakeProvider.tool_turn("generate_report", '{"analysis": "已有分析"}', call_id="c3"),
+        ])
+
+        result = diagnose_run(transcript, engine, db, max_tool_calls=1)
+
+        assert result.status == "degraded"
+        assert result.loop_status == "tool_budget_exceeded"
+        assert "RDB 快照和 AOF 日志" in result.report
+        assert "budget_exceeded" in result.report
+
+    def test_no_successful_material_returns_failed(self, stage: tuple[Path, Path]) -> None:
+        """工具全错时不能拼假报告：没有成功材料就是 failed。"""
+        transcript, db = stage
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("nonexistent_tool", '{"q": "a"}', call_id="c1"),
+            FakeProvider.tool_turn("nonexistent_tool", '{"q": "b"}', call_id="c2"),
+        ])
+
+        result = diagnose_run(transcript, engine, db, max_iterations=2)
+
+        assert result.status == "failed"
+        assert result.loop_status == "max_iterations"
+        assert "面试诊断失败" in result.report
+        assert "没有可用于降级报告" in result.report
+
+    def test_empty_final_answer_with_material_returns_degraded(self, stage: tuple[Path, Path]) -> None:
+        """completed 但正文为空也不能算 full；有工具材料就降级。"""
+        transcript, db = stage
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.text_turn(""),
+        ])
+
+        result = diagnose_run(transcript, engine, db)
+
+        assert result.status == "degraded"
+        assert result.loop_status == "completed"
+        assert "没有返回报告正文" in (result.reason or "")
+        assert "RDB 快照和 AOF 日志" in result.report
+
+    def test_engine_error_returns_failed_without_trace(self, stage: tuple[Path, Path]) -> None:
+        """loop 没跑起来时如实 failed：不伪造轮次，也不拼诊断内容。"""
+        transcript, db = stage
+        engine, _ = make_engine([QueryEngineError.auth("测试密钥错误")])
+
+        result = diagnose_run(transcript, engine, db)
+
+        assert result.status == "failed"
+        assert result.loop_status is None
+        assert result.iterations is None
+        assert "auth" in (result.reason or "")
+        assert "面试诊断失败" in result.report
+
+    def test_degraded_still_saves_session(self, stage: tuple[Path, Path], tmp_path: Path) -> None:
+        """降级也保存现场：之后可以拿 session 排查或续跑。"""
+        transcript, db = stage
+        session = tmp_path / "degraded.json"
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id=f"c{i}")
+            for i in range(3)
+        ])
+
+        result = diagnose_run(transcript, engine, db, session_path=session)
+
+        assert result.status == "degraded"
+        assert session.exists()
+        assert "RDB 快照和 AOF 日志" in session.read_text(encoding="utf-8")
 
     def test_ledger_records_real_cost(self, stage: tuple[Path, Path]) -> None:
         """账本：跑完诊断，engine.ledger 里一定有花销记录（总闸逃不掉票）。"""

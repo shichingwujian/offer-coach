@@ -11,7 +11,7 @@ from typing import Any
 from offer_coach.cli import handle_command
 from offer_coach.engine import EngineConfig, FakeProvider, QueryEngine, RetryConfig
 from offer_coach.memory import MemoryStore, make_memory_hook, recall_block
-from offer_coach.skills import diagnose
+from offer_coach.skills import diagnose, diagnose_run
 from offer_coach.tools import default_registry
 
 
@@ -180,6 +180,26 @@ class TestDiagnoseWithMemory:
         weak = store.retrieve(type="weak_point", key="技术准确性")[0]
         assert weak.confidence == 0.6
         assert store.get_profile()["total_diagnoses"] == 2
+
+    def test_degraded_run_does_not_write_summary(self, tmp_path: Path) -> None:
+        """降级报告不算完整诊断：低分弱点可留档，diagnosis_summary 不能记账。"""
+        transcript = tmp_path / "稿.txt"
+        transcript.write_text("面试官：Redis 持久化？\n候选人：呃……", encoding="utf-8")
+        store = MemoryStore(tmp_path / "m.db")
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("analyze_content", '{"transcript": "x"}', call_id="c1"),
+            FakeProvider.text_turn(WEAK_JSON),  # analyze 内部查询消费这张
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c2"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c3"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c4"),
+        ])
+
+        result = diagnose_run(transcript, engine, tmp_path / "q.db", memory=store)
+
+        assert result.status == "degraded"
+        assert store.stats()["by_type"]["weak_point"] == 2
+        assert "diagnosis_summary" not in store.stats()["by_type"]
+        assert "total_diagnoses" not in store.get_profile()
 
     def test_no_memory_keeps_old_behavior(self, tmp_path: Path) -> None:
         """不传档案柜 = 老行为：剧本里没有历史档案段。"""

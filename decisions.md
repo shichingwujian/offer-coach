@@ -101,3 +101,12 @@
 - 理由：只调轮数挡不住单轮多调用；立即失败会丢掉已有分析材料；补回执保证 tool_call_id 成对，finalize 让模型基于已有材料正常结束
 - 影响：`ToolOutcome` 增加 budget_exceeded，`TurnTrace` 增加 normal/finalize，`LoopStatus` 增加 tool_budget_exceeded；finalize 是正常轮数之外的一次无工具收尾
 - 边界：131 项离线测试通过，仍未做降级报告和真实 API 长稿验收，不得宣称端到端稳定性已验证
+
+## D013 | 2026-10-19 | 诊断结果显式区分 full / degraded / failed，降级报告不调模型
+
+- 背景：P0-2 后非 completed 仍统一抛错；模型可能已经留下成功的分析或检索材料，直接报错会丢掉可用产物，也可能让旧评估链路把“返回文本”误当完整成功
+- 选项：(a) 继续全部报错 (b) 让旧 `diagnose()` 返回降级文本 (c) 新增结构化 `diagnose_run()`，旧 `diagnose()` 保持只接受 full
+- 决定：(c)；`completed + 非空终答` 为 full，非 full 但有成功工具回执为 degraded，无成功材料或 QueryEngineError 为 failed；降级报告用模板拼 history 里的成功 tool 回执，不再调模型
+- 理由：LoopStatus 只说明循环怎么停，DiagnosisStatus 才说明结果可用性；结构化状态能防止 degraded 被误算成成功；确定性拼接避免编造、省钱且不增加失败点
+- 影响：CLI 改用 `diagnose_run()`；旧 `diagnose()` 对 degraded/failed 继续抛错以保护旧评估入口；session 在降级时也保存；只有 full 才写 `diagnosis_summary`
+- 边界：138 项离线测试通过；仍未做真实 API 长稿验收，不得宣称真实模型端到端稳定性已验证

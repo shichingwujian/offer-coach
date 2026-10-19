@@ -22,7 +22,7 @@ from offer_coach.hooks import HookPipeline, truncate_hook
 from offer_coach.knowledge.db import build_db, build_vectors, search_hybrid, search_questions, search_smart
 from offer_coach.memory import MemoryStore, make_memory_hook, recall_block
 from offer_coach.permission import PermissionGate
-from offer_coach.skills import diagnose
+from offer_coach.skills import diagnose, diagnose_run
 from offer_coach.tools import ToolRegistry, default_registry, run_loop
 
 # 搭桥：把 .env 文件读进进程环境变量（不加载它，os.environ 永远看不到 .env）
@@ -80,10 +80,16 @@ def diagnose_cmd(
     gate = PermissionGate(ask=lambda q: input(q).strip().lower() in ("y", "yes"))
     store = MemoryStore(memory)  # 档案柜（D10）：不存在会自动建
     session_path = Path("sessions") / f"{session}.json" if session else None
-    report = diagnose(
+    outcome = diagnose_run(
         transcript, engine, db, gate=gate, session_path=session_path, resume=resume,
         memory=store,
     )
+    if outcome.status == "failed":
+        typer.echo(outcome.report, err=True)
+        raise typer.Exit(code=1)
+    if outcome.status == "degraded":
+        typer.echo(f"诊断降级：{outcome.reason}", err=True)
+    report = outcome.report
     if output:
         output.write_text(report, encoding="utf-8")
         typer.echo(f"报告已写入 {output}")
