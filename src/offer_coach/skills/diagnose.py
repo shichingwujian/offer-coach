@@ -17,7 +17,7 @@ from offer_coach.memory import MemoryStore, make_memory_hook, recall_block
 from offer_coach.permission.gate import PermissionGate
 from offer_coach.session import load_session, save_session
 from offer_coach.tools.builtin import default_registry
-from offer_coach.tools.loop import run_loop
+from offer_coach.tools.loop import TurnTrace, run_loop
 
 _DIRECTOR_SCRIPT = """你是一位资深技术面试官，正在为候选人做面试诊断。
 
@@ -102,7 +102,7 @@ def diagnose(
     if session_path is not None:
         save_session(session_path, result.messages)  # 存档：中断也能续跑
     if result.status != "completed":
-        trace = _format_tool_trace(result.messages)
+        trace = _format_tool_trace(result.trace)
         raise RuntimeError(
             f"诊断未完成（{result.status}，{result.iterations} 轮）："
             f"模型没有走完流程，请重试；工具轨迹：{trace}"
@@ -112,19 +112,30 @@ def diagnose(
     return result.final_text or ""
 
 
-def _format_tool_trace(messages: list[Message], *, max_actions: int = 12) -> str:
-    """把循环里的工具订单压成短轨迹，供失败日志定位；长参数截断，避免错误信息爆炸。"""
+def _format_tool_trace(trace: list[TurnTrace], *, max_actions: int = 12) -> str:
+    """把结构化轨迹压成短错误信息；完整参数和结果仍留在会话消息里。"""
     actions = []
-    for message in messages:
-        if message.role != "assistant" or not message.tool_calls:
-            continue
-        for call in message.tool_calls:
+    for turn in trace:
+        if not turn.tool_traces:
+            actions.append(f"第{turn.iteration}轮(stop={turn.stop_reason})：无工具调用")
+        for call in turn.tool_traces:
             args = " ".join(call.arguments.split())
             if len(args) > 120:
                 args = args[:117] + "..."
-            actions.append(f"{call.name}({args})")
+            if call.outcome == "duplicate":
+                detail = f"duplicate（同参数第{call.repeat_count}次，未执行）"
+            else:
+                detail = f"{call.outcome}，{call.result_chars}字"
+                if call.truncated:
+                    detail += "，已截断"
+                if call.result_preview:
+                    detail += f"，预览：{call.result_preview}"
+            actions.append(
+                f"第{turn.iteration}轮(stop={turn.stop_reason}) "
+                f"{call.name}({args}) -> {detail}"
+            )
     if not actions:
-        return "无工具调用"
+        return "无运行轨迹"
     if len(actions) > max_actions:
         actions = ["..."] + actions[-max_actions:]
     return " -> ".join(actions)

@@ -18,8 +18,11 @@ from offer_coach.engine import (
     RetryConfig,
     ToolCall,
 )
+from offer_coach.hooks import HookPipeline, truncate_hook
 from offer_coach.knowledge import build_db
 from offer_coach.tools import (
+    ToolDef,
+    ToolRegistry,
     default_registry,
     execute_tool,
     generate_report,
@@ -124,6 +127,16 @@ class TestRunLoop:
         assert tool_msg.tool_call_id == "call_1"  # 订单号成对挂回
         assert "RDB" in (tool_msg.content or "")  # 工具结果真的进了历史
         assert len(provider.calls) == 2  # 调了两次模型：下单一次、终答一次
+        assert len(result.trace) == 2
+        first_turn = result.trace[0]
+        assert first_turn.stop_reason == "tool_use"
+        tool_trace = first_turn.tool_traces[0]
+        assert tool_trace.call_id == "call_1"
+        assert tool_trace.outcome == "success"
+        assert tool_trace.repeat_count == 1
+        assert "RDB" in tool_trace.result_preview
+        assert result.trace[1].stop_reason == "end_turn"
+        assert result.trace[1].tool_traces == []
 
     def test_unknown_tool_loop_survives(self, kb_db: Path) -> None:
         engine, _ = make_engine([
@@ -133,6 +146,9 @@ class TestRunLoop:
         result = run_loop(engine, default_registry(engine, kb_db), USER_ASK)
         assert result.status == "completed"
         assert "不存在" in (result.messages[2].content or "")  # 错误当数据喂回去了
+        tool_trace = result.trace[0].tool_traces[0]
+        assert tool_trace.outcome == "error"
+        assert "不存在" in tool_trace.result_preview
 
     def test_stuck_on_third_identical_call(self, kb_db: Path) -> None:
         engine, provider = make_engine([
@@ -143,6 +159,10 @@ class TestRunLoop:
         result = run_loop(engine, default_registry(engine, kb_db), USER_ASK)
         assert result.status == "stuck"  # 同一动作第 3 次：哨兵止损
         assert len(provider.calls) == 3
+        tool_traces = [turn.tool_traces[0] for turn in result.trace]
+        assert [trace.outcome for trace in tool_traces] == ["success", "success", "duplicate"]
+        assert [trace.repeat_count for trace in tool_traces] == [1, 2, 3]
+        assert [m.role for m in result.messages].count("tool") == 2  # 第三次只声明，未执行
 
     def test_max_iterations_stops_distinct_calls(self, kb_db: Path) -> None:
         engine, _ = make_engine([
@@ -152,3 +172,64 @@ class TestRunLoop:
         result = run_loop(engine, default_registry(engine, kb_db), USER_ASK, max_iterations=2)
         assert result.status == "max_iterations"
         assert result.iterations == 2
+        assert len(result.trace) == 2
+        assert [turn.tool_traces[0].arguments for turn in result.trace] == [
+            '{"keyword": "k0"}',
+            '{"keyword": "k1"}',
+        ]
+
+    def test_empty_tool_result_is_traced(self) -> None:
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("empty_tool", "{}"),
+            FakeProvider.text_turn("工具没有返回内容，我直接收尾。"),
+        ])
+        registry = ToolRegistry()
+        registry.register(ToolDef(
+            name="empty_tool",
+            description="测试空结果",
+            parameters={"type": "object", "properties": {}},
+            func=lambda: "",
+        ))
+
+        result = run_loop(engine, registry, USER_ASK)
+
+        tool_trace = result.trace[0].tool_traces[0]
+        assert tool_trace.outcome == "empty"
+        assert tool_trace.result_chars == 0
+        assert tool_trace.result_preview == ""
+
+    def test_blocked_tool_result_is_traced(self) -> None:
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("dangerous_tool", "{}"),
+            FakeProvider.text_turn("权限不足，我直接说明情况。"),
+        ])
+        registry = ToolRegistry()
+        registry.register(ToolDef(
+            name="dangerous_tool",
+            description="测试权限拦截",
+            parameters={"type": "object", "properties": {}},
+            func=lambda: "不应执行",
+        ))
+        hooks = HookPipeline()
+        hooks.add_pre(lambda _name, _args: (False, "测试拦截"))
+
+        result = run_loop(engine, registry, USER_ASK, hooks=hooks)
+
+        tool_trace = result.trace[0].tool_traces[0]
+        assert tool_trace.outcome == "blocked"
+        assert tool_trace.result_preview == "测试拦截"
+
+    def test_truncated_tool_result_is_traced(self, kb_db: Path) -> None:
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}'),
+            FakeProvider.text_turn("根据截断后的结果收尾。"),
+        ])
+        hooks = HookPipeline()
+        hooks.add_post(truncate_hook(20))
+
+        result = run_loop(engine, default_registry(engine, kb_db), USER_ASK, hooks=hooks)
+
+        tool_trace = result.trace[0].tool_traces[0]
+        assert tool_trace.truncated is True
+        assert tool_trace.result_chars == len(result.messages[2].content or "")
+        assert "已截断" in tool_trace.result_preview

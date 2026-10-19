@@ -83,6 +83,9 @@ class TestDiagnose:
         assert "3 轮" in message
         assert message.count("query_knowledge_base") == 3
         assert '{"keyword": "Redis"}' in message
+        assert "success" in message
+        assert "duplicate（同参数第3次，未执行）" in message
+        assert "第3轮(stop=tool_use)" in message
 
     def test_ledger_records_real_cost(self, stage: tuple[Path, Path]) -> None:
         """账本：跑完诊断，engine.ledger 里一定有花销记录（总闸逃不掉票）。"""

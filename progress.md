@@ -1,10 +1,10 @@
 # progress.md
 
-> **下次从这里开始：用户已决定停止 D14 消融（不再花 token 迭代）→ 零 API 成本项目收口：核对主流程与简历口径、整理 README / 简历 / 面试问答 → 消融数据不写简历，full 翻车只保留为已知问题**
+> **下次从这里开始：P0-1 结构化运行轨迹 ✅（代码 + 125 项离线测试 + explain-back）→ P0-2 工具调用预算：先定分层预算与正常收尾行为，仍不做消融**
 
 ## 当前阶段
 
-核心层 D1-D10 收官 ✅ → 深度冲刺：D11 评估集+基线 ✅ → D12 查询预处理 ✅ → D13 混合召回 ✅（122 测试全过，recall@5 37.0%→72.2%→79.6%）→ D14 消融已停止（无有效结论，不写简历）→ 零成本项目收口
+核心层 D1-D10 收官 ✅ → 深度冲刺：D11 评估集+基线 ✅ → D12 查询预处理 ✅ → D13 混合召回 ✅（122 测试全过，recall@5 37.0%→72.2%→79.6%）→ D14 消融已停止（无有效结论，不写简历）→ P0 诊断稳定性：P0-1 结构化运行轨迹 ✅ → P0-2 工具调用预算（下一阶段）
 
 ## 进行中
 
@@ -27,10 +27,12 @@
 - D13：混合召回落地 `knowledge/embedder.py`（Embedder 协议 + FastEmbedder 懒加载 bge-small-zh 512 维本地模型 + FakeEmbedder 哈希假向量，DI 第 7 次）+ db.py 三件套（build_vectors 坐标入库 BLOB / search_vectors 余弦排序 / search_hybrid **RRF 按名次融合**——两路分数是两种货币没法比，名次可比）+ CLI `--mode hybrid` + `ingest --vectors`；**recall@5 = 79.6%（keyword 100% / paraphrase 55.6% / scenario 81.2%）**；插曲：HF 被墙 → hf-mirror 镜像 16 秒解决（D010 风险备案命中）；剩余 11 条漏网是 bge-small 拉不动的最深语义鸿沟（v2：bge-m3/reranker/同义词）；10 测试（累计 102）
 - D14（机器就位，实验待跑）：机制消融落地 `evaluation/ablation.py`（run_fn 注入，DI 第 8 次；别名粗判口径；均值±标准差，翻车如实计数）+ diagnose 双开关（`ablate_kb` 没收检索工具+剧本改两步 / `ablate_script` 裸剧本只留身份；ToolRegistry 加 `unregister`）+ 6 份埋雷稿 12 颗雷（`eval/ablation/`，话题全在题库射程内）+ CLI `ablate` 命令；11 测试（累计 113）；**真机 36 次诊断待用户亲自开炮**
 
+- P0-1：结构化运行轨迹落地——TurnTrace（轮次 / stop_reason / request_id）+ ToolTrace（参数 / 同参次数 / success / empty / error / blocked / duplicate / 截断 / 短预览）+ diagnose 失败信息改读 trace；完整结果仍留 messages，trace 不回喂模型；125 个离线测试全过；explain-back 通过，笔记在 `learning/11-p0-observability.md`，决策见 D011
+
 ## 阻塞 / 问题
 
-- 用户不再为消融投入 API token：停止所有真模型实验与真实稿验收，后续先做零成本收口
-- full 配置在长稿消融中出现过工具循环翻车（stuck / max_iterations），未修复；不得宣称端到端稳定性已验证
+- 用户不再为消融投入 API token：P0 不做消融；真实长稿验收待额度恢复后只跑正常诊断配置，不接裁判模型
+- full 配置在长稿消融中出现过工具循环翻车（stuck / max_iterations），尚未修复；P0-1 只提升可定位性，不得宣称端到端稳定性已验证
 - D13 混合召回已在评估链路验证，但正式诊断工具仍使用基础检索；简历不得暗示主流程已经用上混合召回，除非后续完成接线
 
 ## 临时上下文
