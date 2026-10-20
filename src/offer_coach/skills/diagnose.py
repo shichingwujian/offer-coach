@@ -20,6 +20,8 @@ from offer_coach.engine.engine import QueryEngine
 from offer_coach.engine.errors import QueryEngineError
 from offer_coach.engine.models import Message
 from offer_coach.hooks.pipeline import HookPipeline, truncate_hook
+from offer_coach.knowledge.db import RetrievalMode
+from offer_coach.knowledge.embedder import Embedder
 from offer_coach.memory import MemoryStore, make_memory_hook, recall_block
 from offer_coach.permission.gate import PermissionGate
 from offer_coach.session import load_session, save_session
@@ -76,6 +78,8 @@ def diagnose(
     max_iterations: int = 10,
     max_tool_calls: int | None = 8,
     max_kb_calls: int | None = 3,
+    retrieval_mode: RetrievalMode = "auto",  # P1-1：有向量条件用 hybrid，否则明确退到 terms
+    embedder: Embedder | None = None,  # 测试喂 FakeEmbedder，真机 CLI 喂 FastEmbedder
     gate: PermissionGate | None = None,
     session_path: Path | None = None,
     resume: bool = False,
@@ -95,6 +99,8 @@ def diagnose(
         max_iterations=max_iterations,
         max_tool_calls=max_tool_calls,
         max_kb_calls=max_kb_calls,
+        retrieval_mode=retrieval_mode,
+        embedder=embedder,
         gate=gate,
         session_path=session_path,
         resume=resume,
@@ -117,6 +123,8 @@ def diagnose_run(
     max_iterations: int = 10,
     max_tool_calls: int | None = 8,  # P0-2 总工具声明预算：正常三步流程只用 3 次
     max_kb_calls: int | None = 3,  # P0-2 单项检索预算：防长稿里反复查询题库
+    retrieval_mode: RetrievalMode = "auto",  # P1-1：有向量条件用 hybrid，否则明确退到 terms
+    embedder: Embedder | None = None,  # 测试喂 FakeEmbedder，真机 CLI 喂 FastEmbedder
     gate: PermissionGate | None = None,  # 可选：权限闸门（D8）
     session_path: Path | None = None,  # 可选：跑完把历史存到这个档案（D8）
     resume: bool = False,  # True 时忽略稿子，从 session_path 读档续跑
@@ -143,7 +151,9 @@ def diagnose_run(
             Message(role="system", content=script),
             Message(role="user", content=f"这是候选人的面试稿，请诊断：\n\n{transcript}"),
         ]
-    registry = default_registry(engine, db_path)
+    registry = default_registry(
+        engine, db_path, retrieval_mode=retrieval_mode, embedder=embedder
+    )
     if ablate_kb:
         registry.unregister("query_knowledge_base")  # 消融：没收检索工具
     # 插线板装配（D9）：权限闸插 pre 孔；档案员和结果压缩插 post 孔（D10）

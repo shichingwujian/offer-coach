@@ -14,20 +14,32 @@ from pathlib import Path
 
 from offer_coach.engine.engine import QueryEngine
 from offer_coach.engine.models import Message
-from offer_coach.knowledge.db import search_questions
+from offer_coach.knowledge.db import RetrievalMode, search_for_diagnosis
+from offer_coach.knowledge.embedder import Embedder
 from offer_coach.tools.registry import ToolDef, ToolRegistry
 
 
-def make_query_knowledge_base(db_path: Path) -> Callable[[str], str]:
+def make_query_knowledge_base(
+    db_path: Path,
+    *,
+    retrieval_mode: RetrievalMode = "auto",
+    embedder: Embedder | None = None,
+) -> Callable[[str], str]:
     """工厂函数：造出一个"焊死数据库路径"的查库工具。模型只需要填关键词。"""
 
     def query_knowledge_base(keyword: str) -> str:
-        hits = search_questions(db_path, keyword)
-        if not hits:
-            return f"未找到与 '{keyword}' 相关的题目。"
-        return "\n\n".join(
-            f"[{q.category}] {q.title}\n{q.body}" for q in hits
+        result = search_for_diagnosis(
+            db_path, keyword, mode=retrieval_mode, embedder=embedder
         )
+        mode_line = f"检索模式：{result.mode_used}"
+        if result.fallback_reason:
+            mode_line += f"（{result.fallback_reason}）"
+        if not result.hits:
+            return f"{mode_line}\n\n未找到与 '{keyword}' 相关的题目。"
+        body = "\n\n".join(
+            f"[{q.category}] {q.title}\n{q.body}" for q in result.hits
+        )
+        return f"{mode_line}\n\n{body}"
 
     return query_knowledge_base
 
@@ -106,7 +118,13 @@ def generate_report(analysis: str, candidate: str = "候选人") -> str:
     )
 
 
-def default_registry(engine: QueryEngine, db_path: Path) -> ToolRegistry:
+def default_registry(
+    engine: QueryEngine,
+    db_path: Path,
+    *,
+    retrieval_mode: RetrievalMode = "auto",
+    embedder: Embedder | None = None,
+) -> ToolRegistry:
     """装配三个工具的默认注册表。发动机和数据仓库都在此接入（开店前的装配）。"""
     registry = ToolRegistry()
     registry.register(ToolDef(
@@ -117,7 +135,9 @@ def default_registry(engine: QueryEngine, db_path: Path) -> ToolRegistry:
             "properties": {"keyword": {"type": "string", "description": "检索关键词，至少 3 个字符，如 'Redis'、'持久化'"}},
             "required": ["keyword"],
         },
-        func=make_query_knowledge_base(db_path),
+        func=make_query_knowledge_base(
+            db_path, retrieval_mode=retrieval_mode, embedder=embedder
+        ),
     ))
     registry.register(ToolDef(
         name="analyze_content",

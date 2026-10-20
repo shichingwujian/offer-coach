@@ -19,7 +19,8 @@ from offer_coach.engine import (
     ToolCall,
 )
 from offer_coach.hooks import HookPipeline, truncate_hook
-from offer_coach.knowledge import build_db
+from offer_coach.knowledge import build_db, build_vectors
+from offer_coach.knowledge.embedder import FakeEmbedder
 from offer_coach.tools import (
     ToolBudget,
     ToolDef,
@@ -108,6 +109,30 @@ class TestExecuteTool:
         registry = default_registry(engine, kb_db)
         result = execute_tool(registry, ToolCall(id="c1", name="query_knowledge_base", arguments="{}"))
         assert "缺少必填参数" in result and "keyword" in result
+
+    def test_query_tool_uses_hybrid_and_reports_channel(self, tmp_path: Path) -> None:
+        """正式工具换内脏：字面查不到的题，向量通道能顶上来。"""
+        title = "什么是分布式锁？"
+        body = "Redis 可实现，SETNX 语义。"
+        src = tmp_path / "bank"
+        (src / "01-t").mkdir(parents=True)
+        (src / "01-t" / "index.md").write_text(
+            f"### Q：{title}\n\n{body}\n", encoding="utf-8"
+        )
+        db = tmp_path / "q.db"
+        build_db(src, db)
+        embedder = FakeEmbedder({"跨进程互斥怎么搞": [1.0, 0.0], f"{title}\n{body}": [1.0, 0.0]}, dim=2)
+        build_vectors(db, embedder)
+        engine, _ = make_engine([])
+
+        registry = default_registry(engine, db, embedder=embedder)
+        result = execute_tool(
+            registry,
+            ToolCall(id="c1", name="query_knowledge_base", arguments='{"keyword": "跨进程互斥怎么搞"}'),
+        )
+
+        assert "检索模式：hybrid" in result
+        assert title in result
 
 
 class TestRunLoop:

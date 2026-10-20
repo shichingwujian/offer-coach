@@ -110,3 +110,12 @@
 - 理由：LoopStatus 只说明循环怎么停，DiagnosisStatus 才说明结果可用性；结构化状态能防止 degraded 被误算成成功；确定性拼接避免编造、省钱且不增加失败点
 - 影响：CLI 改用 `diagnose_run()`；旧 `diagnose()` 对 degraded/failed 继续抛错以保护旧评估入口；session 在降级时也保存；只有 full 才写 `diagnosis_summary`
 - 边界：138 项离线测试通过；仍未做真实 API 长稿验收，不得宣称真实模型端到端稳定性已验证
+
+## D014 | 2026-10-20 | 正式诊断检索统一走 search_for_diagnosis，auto 可显式退回 terms
+
+- 背景：D13 的 hybrid 只在评估链路验证，正式 `query_knowledge_base` 仍调用旧 `search_questions`；直接默认强依赖 fastembed 又会让没建向量索引的环境无法诊断
+- 选项：(a) 新增 `query_hybrid_knowledge_base` 工具 (b) 默认硬切 hybrid，缺向量就报错 (c) 原工具内部接入统一检索选择器，auto 按条件选 hybrid/terms
+- 决定：(c)；新增 `RetrievalResult(hits, mode_used, fallback_reason)` 和 `search_for_diagnosis()`；`query_knowledge_base` 名字不变，内部按 `auto / phrase / terms / hybrid` 选择路径；CLI 增加 `--retrieval`
+- 理由：模型菜单保持稳定；缺向量索引是增强能力缺失，不该拖垮诊断；记录真实路径和 fallback 原因，防止“嘴上 hybrid、实际 terms”
+- 影响：诊断入口新增 `retrieval_mode` 和 `embedder` 参数；测试用 FakeEmbedder 验证主流程可走 hybrid；CLI 在 auto/hybrid 下懒加载 FastEmbedder；fastembed 仍是可选依赖
+- 边界：144 项离线测试通过；真实 API 长稿验收仍未做，不能宣称每次真实诊断都走 hybrid，只能说主流程已具备 auto/hybrid 接线和显式退化

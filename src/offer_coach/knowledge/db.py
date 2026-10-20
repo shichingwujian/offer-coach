@@ -14,10 +14,24 @@ from __future__ import annotations
 import sqlite3
 from array import array
 from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel
 
 from offer_coach.knowledge.embedder import Embedder, cosine
 from offer_coach.knowledge.parser import Question, parse_file
 from offer_coach.knowledge.preprocess import extract_terms
+
+RetrievalMode = Literal["auto", "phrase", "terms", "hybrid"]
+RetrievalChannel = Literal["phrase", "terms", "hybrid"]
+
+
+class RetrievalResult(BaseModel):
+    """一次检索的结果和真实路径；mode_used 不能说谎，fallback 要留原因。"""
+
+    hits: list[Question]
+    mode_used: RetrievalChannel
+    fallback_reason: str | None = None
 
 _SCHEMA = """
 CREATE VIRTUAL TABLE questions USING fts5(
@@ -136,6 +150,23 @@ def build_vectors(db_path: Path, embedder: Embedder) -> int:
         conn.close()
 
 
+def has_vectors(db_path: Path) -> bool:
+    """向量通道是否有货：表存在且有坐标才算可用。"""
+    if not db_path.exists():
+        raise FileNotFoundError(f"题库不存在：{db_path}。请先运行 offer-coach ingest <题库目录>")
+    conn = sqlite3.connect(db_path)
+    try:
+        has_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='question_vecs'"
+        ).fetchone()
+        if not has_table:
+            return False
+        (count,) = conn.execute("SELECT COUNT(*) FROM question_vecs").fetchone()
+        return count > 0
+    finally:
+        conn.close()
+
+
 def search_vectors(
     db_path: Path, query: str, limit: int = 5, *, embedder: Embedder
 ) -> list[Question]:
@@ -188,3 +219,50 @@ def search_hybrid(
             entry[0] += 1.0 / (k_rrf + rank + 1)
     ranked = sorted(scores.values(), key=lambda e: -e[0])
     return [entry[1] for entry in ranked[:limit]]
+
+
+def search_for_diagnosis(
+    db_path: Path,
+    query: str,
+    limit: int = 5,
+    *,
+    mode: RetrievalMode = "auto",
+    embedder: Embedder | None = None,
+) -> RetrievalResult:
+    """正式诊断的统一检索入口：请求一种模式，报告真实使用的路径。
+
+    auto 的兜底原则是"增强能力缺失不拖垮诊断"：没有 embedder、没建向量索引、
+    或向量通道加载失败时退回 terms，并把退化原因写进 RetrievalResult。
+    """
+    if mode == "phrase":
+        return RetrievalResult(hits=search_questions(db_path, query, limit), mode_used="phrase")
+    if mode == "terms":
+        return RetrievalResult(hits=search_smart(db_path, query, limit), mode_used="terms")
+    if mode not in ("auto", "hybrid"):
+        raise ValueError(f"未知检索模式：{mode}")
+
+    if embedder is None:
+        return _terms_fallback(db_path, query, limit, "未提供向量模型")
+    if not has_vectors(db_path):
+        return _terms_fallback(db_path, query, limit, "未建向量索引")
+    try:
+        hits = search_hybrid(db_path, query, limit, embedder=embedder)
+    except (ImportError, OSError, RuntimeError) as e:
+        return _terms_fallback(
+            db_path, query, limit, f"向量通道不可用：{type(e).__name__}: {e}"
+        )
+    return RetrievalResult(hits=hits, mode_used="hybrid")
+
+
+def _terms_fallback(
+    db_path: Path,
+    query: str,
+    limit: int,
+    reason: str,
+) -> RetrievalResult:
+    """hybrid 不可用时的明确退化：结果可用，但路径不能伪装。"""
+    return RetrievalResult(
+        hits=search_smart(db_path, query, limit),
+        mode_used="terms",
+        fallback_reason=reason,
+    )

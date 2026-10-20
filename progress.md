@@ -1,10 +1,10 @@
 # progress.md
 
-> **下次从这里开始：P0-3 降级报告 ✅（代码 + 138 项离线测试 + 概念补讲）→ P1-1 把 hybrid 检索接进正式诊断路径，明确 fallback 与离线回归；真实长稿验收待 API 额度恢复**
+> **下次从这里开始：P1-1 hybrid 主流程接线 ✅（代码 + 144 项离线测试 + explain-back）→ P2-1 按漏网原因分类剩余 11 条检索 miss；真实长稿验收待 API 额度恢复**
 
 ## 当前阶段
 
-核心层 D1-D10 收官 ✅ → 深度冲刺：D11 评估集+基线 ✅ → D12 查询预处理 ✅ → D13 混合召回 ✅（122 测试全过，recall@5 37.0%→72.2%→79.6%）→ D14 消融已停止（无有效结论，不写简历）→ P0 诊断稳定性：P0-1 结构化运行轨迹 ✅ → P0-2 工具调用预算 ✅ → P0-3 降级报告 ✅ → P1-1 hybrid 主流程接线（下一阶段）
+核心层 D1-D10 收官 ✅ → 深度冲刺：D11 评估集+基线 ✅ → D12 查询预处理 ✅ → D13 混合召回 ✅（122 测试全过，recall@5 37.0%→72.2%→79.6%）→ D14 消融已停止（无有效结论，不写简历）→ P0 诊断稳定性：P0-1 结构化运行轨迹 ✅ → P0-2 工具调用预算 ✅ → P0-3 降级报告 ✅ → P1-1 hybrid 主流程接线 ✅ → P2-1 检索 miss 归因（下一阶段）
 
 ## 进行中
 
@@ -33,11 +33,13 @@
 
 - P0-3：诊断状态口径落地——`DiagnosisResult(status=full/degraded/failed)` + 新入口 `diagnose_run()`；非 full 但有成功工具回执时确定性拼降级报告（不再调模型补写），无成功材料/API 异常为 failed；CLI 显示降级警告、failed 退出码 1；旧 `diagnose()` 保持严格，防止降级被旧评估链路误算成功；session 降级也保存，只有 full 写 `diagnosis_summary`；138 个离线测试全过；概念补讲记录在 `learning/13-p0-degraded-report.md`，决策见 D013
 
+- P1-1：hybrid 主流程接线落地——`search_for_diagnosis()` 统一检索入口 + `RetrievalResult(hits, mode_used, fallback_reason)`；`query_knowledge_base` 换内脏不换菜单，支持 `auto / phrase / terms / hybrid`，auto 有 embedder+向量索引用 hybrid，否则明确退 terms；工具回执显示真实检索模式；诊断入口和 CLI `--retrieval` 已接线，fastembed 仍为可选依赖；144 个离线测试全过；explain-back 通过，笔记在 `learning/14-p1-hybrid-main-flow.md`，决策见 D014
+
 ## 阻塞 / 问题
 
 - 用户不再为消融投入 API token：P0 不做消融；真实长稿验收待额度恢复后只跑正常诊断配置，不接裁判模型
 - full 配置在长稿消融中出现过工具循环翻车（stuck / max_iterations）；P0-1 已补轨迹、P0-2 已补预算与无工具收尾、P0-3 已补降级报告，但真实长稿验收仍未做，不得宣称端到端稳定性已验证
-- D13 混合召回已在评估链路验证，但正式诊断工具仍使用基础检索；简历不得暗示主流程已经用上混合召回，除非后续完成接线
+- D13 混合召回已接入正式诊断 auto 路径，但真实使用取决于向量索引和 embedder 可用性；工具回执会写明 hybrid 或 terms fallback，简历不得宣称“每次诊断都走 hybrid”
 
 ## 临时上下文
 

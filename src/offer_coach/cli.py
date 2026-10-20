@@ -2,6 +2,7 @@
 
 import re
 from pathlib import Path
+from typing import cast
 
 import typer
 from dotenv import load_dotenv
@@ -19,7 +20,14 @@ from offer_coach.evaluation import (
     write_run_log,
 )
 from offer_coach.hooks import HookPipeline, truncate_hook
-from offer_coach.knowledge.db import build_db, build_vectors, search_hybrid, search_questions, search_smart
+from offer_coach.knowledge.db import (
+    RetrievalMode,
+    build_db,
+    build_vectors,
+    search_hybrid,
+    search_questions,
+    search_smart,
+)
 from offer_coach.memory import MemoryStore, make_memory_hook, recall_block
 from offer_coach.permission import PermissionGate
 from offer_coach.skills import diagnose, diagnose_run
@@ -65,11 +73,16 @@ def diagnose_cmd(
     session: str | None = typer.Option(None, help="存档名：跑完存到 sessions/<名字>.json"),
     resume: bool = typer.Option(False, "--resume", help="从存档续跑（需配合 --session）"),
     memory: Path = typer.Option(Path("memory.db"), "--memory", help="记忆库路径：跨次诊断记住候选人弱点"),
+    retrieval: str = typer.Option("auto", "--retrieval", help="检索模式：auto=有向量用混合，没向量用拆词；phrase=旧基线；terms=拆词；hybrid=混合召回"),
 ) -> None:
     """诊断一份面试稿：分析回答 → 对照题库 → 生成报告。真调模型，会花几分钱。"""
     if resume and not session:
         typer.echo("--resume 需要配合 --session <存档名>", err=True)
         raise typer.Exit(code=1)
+    if retrieval not in ("auto", "phrase", "terms", "hybrid"):
+        typer.echo(f"未知检索模式 {retrieval}，可选：auto / phrase / terms / hybrid", err=True)
+        raise typer.Exit(code=1)
+    retrieval_mode = cast(RetrievalMode, retrieval)
     try:
         provider = OpenAIProvider.from_env()
     except QueryEngineError as e:
@@ -80,9 +93,14 @@ def diagnose_cmd(
     gate = PermissionGate(ask=lambda q: input(q).strip().lower() in ("y", "yes"))
     store = MemoryStore(memory)  # 档案柜（D10）：不存在会自动建
     session_path = Path("sessions") / f"{session}.json" if session else None
+    embedder = None
+    if retrieval_mode in ("auto", "hybrid"):
+        from offer_coach.knowledge.embedder import FastEmbedder  # 懒加载：只在这些模式下准备向量模型
+
+        embedder = FastEmbedder()
     outcome = diagnose_run(
         transcript, engine, db, gate=gate, session_path=session_path, resume=resume,
-        memory=store,
+        memory=store, retrieval_mode=retrieval_mode, embedder=embedder,
     )
     if outcome.status == "failed":
         typer.echo(outcome.report, err=True)
