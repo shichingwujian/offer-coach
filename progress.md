@@ -1,10 +1,10 @@
 # progress.md
 
-> **下次从这里开始：P1-1 hybrid 主流程接线 ✅（代码 + 144 项离线测试 + explain-back）→ P2-1 按漏网原因分类剩余 11 条检索 miss；真实长稿验收待 API 额度恢复**
+> **下次从这里开始：P2-1 漏网解剖 ✅（157 项离线测试 + 11 条归因：召回病 2 / 排序病 5 / 融合挤压 4）→ P2-2 按 D015 下药：先做融合池深度与输出 k 解耦（预计零依赖救回 5 条）；真实长稿验收待 API 额度恢复**
 
 ## 当前阶段
 
-核心层 D1-D10 收官 ✅ → 深度冲刺：D11 评估集+基线 ✅ → D12 查询预处理 ✅ → D13 混合召回 ✅（122 测试全过，recall@5 37.0%→72.2%→79.6%）→ D14 消融已停止（无有效结论，不写简历）→ P0 诊断稳定性：P0-1 结构化运行轨迹 ✅ → P0-2 工具调用预算 ✅ → P0-3 降级报告 ✅ → P1-1 hybrid 主流程接线 ✅ → P2-1 检索 miss 归因（下一阶段）
+核心层 D1-D10 收官 ✅ → 深度冲刺：D11 评估集+基线 ✅ → D12 查询预处理 ✅ → D13 混合召回 ✅（122 测试全过，recall@5 37.0%→72.2%→79.6%）→ D14 消融已停止（无有效结论，不写简历）→ P0 诊断稳定性：P0-1 结构化运行轨迹 ✅ → P0-2 工具调用预算 ✅ → P0-3 降级报告 ✅ → P1-1 hybrid 主流程接线 ✅ → P2-1 漏网解剖 ✅（157 测试全过）→ P2-2 融合池深度解耦（下一阶段）
 
 ## 进行中
 
@@ -34,6 +34,8 @@
 - P0-3：诊断状态口径落地——`DiagnosisResult(status=full/degraded/failed)` + 新入口 `diagnose_run()`；非 full 但有成功工具回执时确定性拼降级报告（不再调模型补写），无成功材料/API 异常为 failed；CLI 显示降级警告、failed 退出码 1；旧 `diagnose()` 保持严格，防止降级被旧评估链路误算成功；session 降级也保存，只有 full 写 `diagnosis_summary`；138 个离线测试全过；概念补讲记录在 `learning/13-p0-degraded-report.md`，决策见 D013
 
 - P1-1：hybrid 主流程接线落地——`search_for_diagnosis()` 统一检索入口 + `RetrievalResult(hits, mode_used, fallback_reason)`；`query_knowledge_base` 换内脏不换菜单，支持 `auto / phrase / terms / hybrid`，auto 有 embedder+向量索引用 hybrid，否则明确退 terms；工具回执显示真实检索模式；诊断入口和 CLI `--retrieval` 已接线，fastembed 仍为可选依赖；144 个离线测试全过；explain-back 通过，笔记在 `learning/14-p1-hybrid-main-flow.md`，决策见 D014
+
+- P2-1：漏网解剖落地——`evaluation/miss_analysis.py`（find_rank 榜单找名次 / classify 三类病因 / dissect_misses 三通道解剖 / format_dissection）+ CLI `eval --mode hybrid --dissect`；全程字符串比对零模型调用；11 条漏网归因：**召回病 2 / 排序病 5 / 融合挤压 4**；关键发现：融合池深度是隐藏变量（深池融合下 5 条排序病全部进前 5，零依赖可救）、融合挤压是计分规则冤枉向量通道、真召回病只有 2 条；归因表入 `eval/README.md`，P2-2 药方按性价比排序入 D015；157 个离线测试全过；explain-back 通过，笔记在 `learning/16-p2-miss-analysis.md`
 
 ## 阻塞 / 问题
 

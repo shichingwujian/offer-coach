@@ -13,6 +13,16 @@ from offer_coach.evaluation.ablation import (
     run_ablation,
     write_run_log,
 )
+from offer_coach.evaluation.miss_analysis import (
+    CAUSE_LABELS,
+    ChannelSearch,
+    MissCause,
+    MissRank,
+    classify,
+    dissect_misses,
+    find_rank,
+    format_dissection,
+)
 from offer_coach.evaluation.recall import (
     CaseResult,
     EvalCase,
@@ -24,15 +34,23 @@ from offer_coach.evaluation.recall import (
 )
 
 __all__ = [
+    "CAUSE_LABELS",
     "CONFIGS",
     "AblationCase",
     "CaseResult",
+    "ChannelSearch",
     "EvalCase",
     "EvalReport",
     "Mine",
+    "MissCause",
+    "MissRank",
     "RunResult",
     "SearchFn",
+    "classify",
+    "dissect_misses",
+    "find_rank",
     "format_ablation",
+    "format_dissection",
     "format_report",
     "load_eval_set",
     "load_mines",

@@ -10,7 +10,9 @@ from dotenv import load_dotenv
 from offer_coach.context import ContextManager
 from offer_coach.engine import EngineConfig, Message, OpenAIProvider, QueryEngine, QueryEngineError
 from offer_coach.evaluation import (
+    dissect_misses,
     format_ablation,
+    format_dissection,
     format_report,
     load_eval_set,
     load_mines,
@@ -27,6 +29,7 @@ from offer_coach.knowledge.db import (
     search_hybrid,
     search_questions,
     search_smart,
+    search_vectors,
 )
 from offer_coach.memory import MemoryStore, make_memory_hook, recall_block
 from offer_coach.permission import PermissionGate
@@ -130,8 +133,12 @@ def eval_cmd(
     db: Path = typer.Option(Path("questions.db"), help="题库数据库路径"),
     k: int = typer.Option(5, help="recall@k 的 k（前 k 个结果里命中即算中）"),
     mode: str = typer.Option("phrase", help="检索模式：phrase=整句短语（基线）/ terms=拆词OR（D12）/ hybrid=混合召回（D13）"),
+    dissect: bool = typer.Option(False, "--dissect", help="漏网解剖：查每条漏网的目标题在三通道各排第几（需 --mode hybrid）"),
 ) -> None:
     """召回评估：跑评估集出 recall@k。纯本地检索，零模型调用、零成本。"""
+    if dissect and mode != "hybrid":
+        typer.echo("漏网解剖要对比三个通道，请用 --mode hybrid --dissect", err=True)
+        raise typer.Exit(code=1)
     cases = load_eval_set(eval_set)
     # 注入被测的检索函数（同一接口换内脏：基线短语 vs D12 拆词 vs D13 混合召回）
     if mode == "phrase":
@@ -149,6 +156,17 @@ def eval_cmd(
     report = run_recall(cases, search, k=k)
     typer.echo(f"检索模式：{mode}")
     typer.echo(format_report(report))
+    if dissect and report.misses:
+        # P2-1 漏网解剖：同一查询在三通道各拉完整榜单，找标准答案名次（纯本地）
+        ranks = dissect_misses(
+            report.misses,
+            terms_search=lambda q, n: search_smart(db, q, limit=n),
+            vector_search=lambda q, n: search_vectors(db, q, limit=n, embedder=embedder),
+            hybrid_search=lambda q, n: search_hybrid(db, q, limit=n, embedder=embedder),
+            k=k,
+        )
+        typer.echo("")
+        typer.echo(format_dissection(ranks, k=k))
 
 
 @app.command()

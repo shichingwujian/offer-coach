@@ -111,6 +111,15 @@
 - 影响：CLI 改用 `diagnose_run()`；旧 `diagnose()` 对 degraded/failed 继续抛错以保护旧评估入口；session 在降级时也保存；只有 full 才写 `diagnosis_summary`
 - 边界：138 项离线测试通过；仍未做真实 API 长稿验收，不得宣称真实模型端到端稳定性已验证
 
+## D015 | 2026-10-20 | P2-2 药方按归因排序：先解耦融合池深度，再考虑 reranker/同义词
+
+- 背景：P2-1 漏网解剖（`eval --mode hybrid --dissect`）给出 11 条漏网的三通道名次：召回病 2 / 排序病 5 / 融合挤压 4；5 条排序病在深池（pool=50）融合下全部进前 5
+- 选项：(a) 直接上 bge-m3 大模型 (b) 直接加 reranker (c) 按病因性价比排序：先融合池深度与输出 k 解耦 → 再加权 RRF/reranker → 最后同义词/bge-m3
+- 决定：(c)
+- 理由：不确诊就吃药可能白吃（D009 原则的延伸）——解耦池深度零新依赖、预计救回 5 条，是第一优先；换 embedding 模型只治 2 条召回病，却加几百 MB 依赖，放最后
+- 影响：P2-2 第一步改 `search_hybrid` 内部取数深度（返回仍 top-k），评估集复测验证药效；`search_smart`/`search_vectors` 排名随 limit 变化（合并池随 limit 放大）是已知测量特性，解剖时必须用深池榜单
+- 边界：解剖结论基于 54 条评估集，真实查询分布可能不同；每味药下完都要用同一把尺子复测，数字不涨就回滚
+
 ## D014 | 2026-10-20 | 正式诊断检索统一走 search_for_diagnosis，auto 可显式退回 terms
 
 - 背景：D13 的 hybrid 只在评估链路验证，正式 `query_knowledge_base` 仍调用旧 `search_questions`；直接默认强依赖 fastembed 又会让没建向量索引的环境无法诊断
