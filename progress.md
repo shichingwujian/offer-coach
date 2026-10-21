@@ -1,6 +1,6 @@
 # progress.md
 
-> **下次从这里开始：P0-4 DSML 泄漏已修 ✅（收尾轮放行零成本工具 + 终答哨兵，178 测试全过，见 D020）→ 下一步候选：真实长稿回归验证（跑一次 eval/long/ 确认修复，要花 API 额度）/ P3 产品化**
+> **下次从这里开始：P0-4 DSML 泄漏已修并真机回归验证 ✅（收尾轮白名单 + 终答哨兵，178 测试全过；plain 配置重跑 generate_report 真实执行、零 DSML，见 D020）→ 下一步候选：P3 产品化（Web 壳/部署/输入层分轮清洗/题库 v2）**
 
 ## 当前阶段
 
@@ -45,12 +45,12 @@
 
 - 真实长稿验收（2026-10-21，API 充值后执行）：`eval/long/long-01.md`（约 4000 字 12 轮，埋两颗雷）两配置对照各跑一次不 rerun，总账单 $0.021；**P0 稳定性达标**（无 stuck/max_iterations，kb 预算触发后正常收尾，hybrid+rerank 诚实口径在真机回执中出现）；**判卷 ✅✅✅**（reranker≠加权、余弦不受长度影响两颗雷全挖出 + 题库引用正确）；**新发现 DSML 泄漏**（无工具 finalize 轮模型把 generate_report 写成 DSML 文本终答，判 full 但交付物乱码），药方候选三条入 D019，修复归 P0-4；笔记在 `learning/20-long-acceptance.md`，结果表在 `eval/long/README.md`
 
-- P0-4：DSML 泄漏修复落地——`run_loop` 加 `finalize_tools` 白名单（收尾轮放行业务层点名的零成本工具，diagnose 传 generate_report；白名单订单正常执行、过 hooks、不计预算，执行完递归一轮真·无工具收尾）+ diagnose 终答哨兵（DSML/<invoke 等工具调用标记 → 改判 degraded，乱码不进交付物）+ CLI 暴露 `--max-tool-calls`/`--max-kb-calls`，kb 预算默认 3→5（长稿实测 3 次偏紧）；178 个离线测试全过（新增 4 项替换 1 项）；笔记在 `learning/21-p0-4-dsml-fix.md`，决策见 D020；**真实长稿回归验证未做（需再花 API 额度）**
+- P0-4：DSML 泄漏修复落地——`run_loop` 加 `finalize_tools` 白名单（收尾轮放行业务层点名的零成本工具，diagnose 传 generate_report；白名单订单正常执行、过 hooks、不计预算，执行完递归一轮真·无工具收尾）+ diagnose 终答哨兵（DSML/<invoke 等工具调用标记 → 改判 degraded，乱码不进交付物）+ CLI 暴露 `--max-tool-calls`/`--max-kb-calls`，kb 预算默认 3→5（长稿实测 3 次偏紧）；178 个离线测试全过（新增 4 项替换 1 项）；笔记在 `learning/21-p0-4-dsml-fix.md`，决策见 D020；**真机回归验证 ✅（plain 配置重跑：收尾轮 generate_report 真实执行、报告零 DSML、两颗埋雷再挖出，$0.0246）**
 
 ## 阻塞 / 问题
 
 - 用户不再为消融投入 API token：P0 不做消融；真实长稿验收待额度恢复后只跑正常诊断配置，不接裁判模型
-- full 配置在长稿消融中出现过工具循环翻车（stuck / max_iterations）；P0-1 已补轨迹、P0-2 已补预算与无工具收尾、P0-3 已补降级报告。**2026-10-21 真实长稿验收已还（eval/long/）**：两配置均无死循环翻车、预算收尾正常、判卷挖出两颗埋雷；但钓出新翻车形态 DSML 泄漏（无工具 finalize 轮模型把 generate_report 写成文本终答，交付物乱码），已由 P0-4 修复（D020：收尾轮白名单 + 终答哨兵），真实长稿回归验证待下次有额度时执行
+- full 配置在长稿消融中出现过工具循环翻车（stuck / max_iterations）；P0-1 已补轨迹、P0-2 已补预算与无工具收尾、P0-3 已补降级报告。**2026-10-21 真实长稿验收已还（eval/long/）**：两配置均无死循环翻车、预算收尾正常、判卷挖出两颗埋雷；但钓出新翻车形态 DSML 泄漏（无工具 finalize 轮模型把 generate_report 写成文本终答，交付物乱码），已由 P0-4 修复（D020：收尾轮白名单 + 终答哨兵）并真机回归验证通过（report-01-fixed.md，零 DSML）
 - D13 混合召回已接入正式诊断 auto 路径，但真实使用取决于向量索引和 embedder 可用性；工具回执会写明 hybrid 或 terms fallback，简历不得宣称“每次诊断都走 hybrid”
 
 ## 临时上下文

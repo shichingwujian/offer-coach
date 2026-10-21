@@ -71,6 +71,17 @@ kb 预算触发后都能补回执收尾——P0-2 机制在真实长稿上工作
 **口径声明**：两次运行各跑一次，未 rerun 刷数字；翻车如实记录。
 两份报告原文在本目录，session 轨迹在本地 `sessions/`（隐私，不入库）。
 
+## P0-4 回归验证（2026-10-21，修复后）
+
+plain 配置（出事故的那个）重跑一次：`report-01-fixed.md`。
+
+- **DSML 泄漏修复生效** ✅：kb 预算（已调 5）第 6 次被拒 → 收尾轮模型调 generate_report
+  → **白名单放行、真实执行** → 模型看着排版回执写终答 → full，报告 grep DSML = 0
+- 轨迹：analyze×1 → kb×4 → kb×2（第 6 次被预算拒）→ 收尾轮 1：generate_report success
+  → 收尾轮 2：无工具交终答——与回归测试 `test_finalize_round_executes_zero_cost_report_tool` 脚本一致
+- 判卷：两颗埋雷再次全挖出（reranker≠加权、余弦不受长度影响均标 P0）
+- 账单 $0.0246（kb 预算 3→5 后多查了 2 次，成本上升在预期内）
+
 ## 报告质量人工判卷（不接裁判模型，肉眼三条）
 
 1. 有没有点出 reranker ≠ 加权 这个错误？
