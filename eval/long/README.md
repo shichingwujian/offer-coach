@@ -18,15 +18,21 @@ P0-1（轨迹）→ P0-2（预算）→ P0-3（降级）三连修完后，**还�
 
 ## 执行步骤（充值后按顺序）
 
-```bash
+PowerShell 先设一次编码（防中文乱码），本窗口内有效：
+
+```powershell
+$env:PYTHONIOENCODING="utf-8"
+```
+
+```powershell
 # 0. 冒烟：确认额度到账（一次调用，约 1 分钱以内）
-PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe scripts/ping_api.py
+python scripts/ping_api.py
 
 # 1. 正常诊断配置，带精排裁判（主流程推荐配置）
-PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m offer_coach.cli diagnose eval/long/long-01.md --rerank --session long01 --output eval/long/report-01-rerank.md
+python -m offer_coach.cli diagnose eval/long/long-01.md --rerank --session long01 --output eval/long/report-01-rerank.md
 
 # 2. 对照：不带裁判（隔离裁判对稳定性的影响）
-PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m offer_coach.cli diagnose eval/long/long-01.md --session long01-plain --output eval/long/report-01-plain.md
+python -m offer_coach.cli diagnose eval/long/long-01.md --session long01-plain --output eval/long/report-01-plain.md
 ```
 
 每条命令跑完记录三样东西（填到下表）：
