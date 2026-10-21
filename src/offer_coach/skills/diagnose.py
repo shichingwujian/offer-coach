@@ -5,6 +5,8 @@
 
 P0-3：诊断结果显式分为 full / degraded / failed。降级报告只拼已有工具回执，
 不再调用模型补写，避免把缺失步骤编造成完整结论。
+P0-4：收尾轮放行零成本的 generate_report（DSML 泄漏治本），
+终答出现工具调用标记时改判 degraded（兜底）。
 """
 
 from __future__ import annotations
@@ -78,7 +80,7 @@ def diagnose(
     *,
     max_iterations: int = 10,
     max_tool_calls: int | None = 8,
-    max_kb_calls: int | None = 3,
+    max_kb_calls: int | None = 5,
     retrieval_mode: RetrievalMode = "auto",  # P1-1：有向量条件用 hybrid，否则明确退到 terms
     embedder: Embedder | None = None,  # 测试喂 FakeEmbedder，真机 CLI 喂 FastEmbedder
     reranker: Reranker | None = None,  # P2-4：精排裁判，只挂 hybrid 路径；测试喂 FakeReranker
@@ -125,7 +127,7 @@ def diagnose_run(
     *,
     max_iterations: int = 10,
     max_tool_calls: int | None = 8,  # P0-2 总工具声明预算：正常三步流程只用 3 次
-    max_kb_calls: int | None = 3,  # P0-2 单项检索预算：防长稿里反复查询题库
+    max_kb_calls: int | None = 5,  # P0-2 单项检索预算；P0-4 长稿实测 3 次不够模型查证，调到 5
     retrieval_mode: RetrievalMode = "auto",  # P1-1：有向量条件用 hybrid，否则明确退到 terms
     embedder: Embedder | None = None,  # 测试喂 FakeEmbedder，真机 CLI 喂 FastEmbedder
     reranker: Reranker | None = None,  # P2-4：精排裁判，只挂 hybrid 路径；测试喂 FakeReranker
@@ -181,6 +183,9 @@ def diagnose_run(
                 max_total_calls=max_tool_calls,
                 max_calls_by_tool={"query_knowledge_base": max_kb_calls} if max_kb_calls is not None else {},
             ),
+            # P0-4：generate_report 是纯模板零成本工具，收尾轮照常放行——
+            # 收走它等于逼模型手写报告，写出来的就是 DSML 乱码（真实验收事故）
+            finalize_tools=("generate_report",),
         )
     except QueryEngineError as e:
         reason = f"模型服务调用失败（{e.category}）：{e}"
@@ -196,7 +201,8 @@ def diagnose_run(
         save_session(session_path, result.messages)  # 存档：中断也能续跑
 
     final_text = (result.final_text or "").strip()
-    if result.status == "completed" and final_text:
+    markup_leak = bool(final_text) and _contains_tool_call_markup(final_text)
+    if result.status == "completed" and final_text and not markup_leak:
         if memory is not None:
             _write_summary(memory, transcript_path, result.final_text or "")  # 完整跑成才记摘要
         return DiagnosisResult(
@@ -207,7 +213,11 @@ def diagnose_run(
             loop_status=result.status,
         )
 
-    reason = _interruption_reason(result)
+    if markup_leak:
+        # P0-4 哨兵：模型把工具调用写成正文（DSML 泄漏），这不是报告，不能判 full
+        reason = "终答包含工具调用标记（DSML 泄漏）：模型想调工具却写成了正文，未产出真正的报告"
+    else:
+        reason = _interruption_reason(result)
     materials = _successful_tool_materials(result)
     if materials:
         return DiagnosisResult(
@@ -224,6 +234,16 @@ def diagnose_run(
         iterations=result.iterations,
         loop_status=result.status,
     )
+
+
+# P0-4：模型在无工具轮"假装下单"时写出来的标记形态（DeepSeek DSML / XML invoke 等）。
+# 正经诊断报告里不会出现这些字样，误伤风险极低；宁可清单短一点，也不猜。
+_TOOL_MARKUP_PATTERNS = ("DSML", "<invoke", "</invoke>", "tool_calls_begin", "<function_calls")
+
+
+def _contains_tool_call_markup(text: str) -> bool:
+    """终答哨兵：正文里出现工具调用标记 = 模型想下单没下成，这不是报告。"""
+    return any(pattern in text for pattern in _TOOL_MARKUP_PATTERNS)
 
 
 def _interruption_reason(result: LoopResult) -> str:

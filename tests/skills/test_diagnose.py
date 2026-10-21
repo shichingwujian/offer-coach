@@ -174,21 +174,56 @@ class TestDiagnose:
         assert "duplicate（同参数第3次，未执行）" in result.report
         assert "stuck" in (result.reason or "")
 
-    def test_finalize_requesting_tool_with_material_returns_degraded(self, stage: tuple[Path, Path]) -> None:
-        """收尾轮仍下单：loop 失败，但第一张成功检索回执仍能降级保留。"""
+    def test_finalize_round_executes_zero_cost_report_tool(self, stage: tuple[Path, Path]) -> None:
+        """P0-4 治本（真实长稿 DSML 事故的回归测试）：预算耗尽的收尾轮里，
+        零成本的 generate_report 照常可用——模型不用再"假装下单"手写报告。"""
+        transcript, db = stage
+        engine, provider = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "持久化"}', call_id="c2"),
+            FakeProvider.tool_turn("generate_report", '{"analysis": "已有分析"}', call_id="c3"),  # 收尾轮
+            FakeProvider.text_turn("# 面试诊断报告\n\n基于收尾轮的排版交付"),
+        ])
+
+        result = diagnose_run(transcript, engine, db, max_tool_calls=1)
+
+        assert result.status == "full"
+        assert "基于收尾轮的排版交付" in result.report
+        assert len(provider.calls) == 4  # 正常轮 + 超预算轮 + 收尾轮（白名单执行）+ 真·无工具收尾
+
+    def test_finalize_round_non_whitelisted_tool_still_fails_safely(self, stage: tuple[Path, Path]) -> None:
+        """白名单只放行零成本工具：收尾轮仍想查库，照旧补回执止损。"""
         transcript, db = stage
         engine, _ = make_engine([
             FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
-            FakeProvider.tool_turn("generate_report", '{"analysis": "已有分析"}', call_id="c2"),
-            FakeProvider.tool_turn("generate_report", '{"analysis": "已有分析"}', call_id="c3"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "持久化"}', call_id="c2"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "AOF"}', call_id="c3"),  # 收尾轮还想查
         ])
 
         result = diagnose_run(transcript, engine, db, max_tool_calls=1)
 
         assert result.status == "degraded"
         assert result.loop_status == "tool_budget_exceeded"
-        assert "RDB 快照和 AOF 日志" in result.report
+        assert "RDB 快照和 AOF 日志" in result.report  # 第一次成功检索的材料保留
         assert "budget_exceeded" in result.report
+
+    def test_dsml_markup_in_final_answer_returns_degraded(self, stage: tuple[Path, Path]) -> None:
+        """P0-4 兜底：模型把工具调用写成 DSML 正文——能交差但不是报告，判 degraded。"""
+        transcript, db = stage
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.text_turn(
+                '<｜DSML｜> calls>\n<｜DSML｜> invoke name="generate_report">\n'
+                '<｜DSML｜> parameter name="analysis" string="true">已有分析</｜DSML｜>'
+            ),
+        ])
+
+        result = diagnose_run(transcript, engine, db)
+
+        assert result.status == "degraded"
+        assert "工具调用标记" in (result.reason or "")
+        assert "RDB 快照和 AOF 日志" in result.report  # 已有材料降级保留
+        assert "｜DSML｜" not in result.report  # 乱码原文不许进交付物
 
     def test_no_successful_material_returns_failed(self, stage: tuple[Path, Path]) -> None:
         """工具全错时不能拼假报告：没有成功材料就是 failed。"""

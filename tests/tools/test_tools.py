@@ -343,6 +343,55 @@ class TestRunLoop:
         assert result.messages[-1].role == "tool"  # 收尾轮的订单也补了回执
         assert result.messages[-1].tool_call_id == "c2"
 
+    def test_finalize_whitelisted_tool_executes_then_final_answer(self, kb_db: Path) -> None:
+        """P0-4：收尾轮白名单工具正常执行，执行完再补一轮真·无工具收尾。"""
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "持久化"}', call_id="c2"),
+            FakeProvider.tool_turn("generate_report", '{"analysis": "已有分析"}', call_id="c3"),
+            FakeProvider.text_turn("报告已排版，交付。"),
+        ])
+
+        result = run_loop(
+            engine,
+            default_registry(engine, kb_db),
+            USER_ASK,
+            budget=ToolBudget(max_total_calls=1),
+            finalize_tools=("generate_report",),
+        )
+
+        assert result.status == "completed"
+        assert result.final_text == "报告已排版，交付。"
+        assert [turn.mode for turn in result.trace] == ["normal", "normal", "finalize", "finalize"]
+        assert result.trace[1].tool_traces[0].outcome == "budget_exceeded"  # c2 超总预算
+        whitelist_trace = result.trace[2].tool_traces[0]
+        assert whitelist_trace.name == "generate_report"
+        assert whitelist_trace.outcome == "success"  # 白名单放行且执行成功
+        assert result.trace[3].tool_traces == []  # 真·无工具收尾：只交终答
+        # 白名单订单的回执挂回历史，模型是看着排版结果写的终答
+        assert "面试诊断报告" in (result.messages[-2].content or "")
+
+    def test_finalize_whitelist_excludes_other_tools(self, kb_db: Path) -> None:
+        """白名单只放行点名的工具：收尾轮仍想查库，照旧补回执止损。"""
+        engine, _ = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "Redis"}', call_id="c1"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "持久化"}', call_id="c2"),
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "AOF"}', call_id="c3"),
+        ])
+
+        result = run_loop(
+            engine,
+            default_registry(engine, kb_db),
+            USER_ASK,
+            budget=ToolBudget(max_total_calls=1),
+            finalize_tools=("generate_report",),
+        )
+
+        assert result.status == "tool_budget_exceeded"
+        final_trace = result.trace[-1].tool_traces[0]
+        assert final_trace.name == "query_knowledge_base"
+        assert final_trace.outcome == "budget_exceeded"
+
     def test_failed_tool_call_still_counts_toward_budget(self, kb_db: Path) -> None:
         engine, _ = make_engine([
             FakeProvider.tool_turn("nonexistent_tool", "{}", call_id="c1"),

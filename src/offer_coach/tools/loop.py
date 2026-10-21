@@ -3,6 +3,7 @@
 一次循环 = 调模型 → 先记录 assistant 消息 → 有订单就执行工具、结果挂回历史 → 再调。
 退出条件：模型不再下单（completed）/ 同一动作重复 3 次（stuck）/ 轮数耗尽（max_iterations）。
 P0-2 增加工具声明预算：超预算后补工具回执，并给模型一轮无工具收尾机会。
+P0-4 收尾轮放行零成本工具白名单：预算防的是烧钱工具，纯模板工具收走只会逼模型手写报告。
 """
 
 from __future__ import annotations
@@ -76,7 +77,8 @@ def run_loop(
     max_repeats: int = 3,
     context: ContextManager | None = None,  # 可选：传了就每次调模型前裁剪历史（D7）
     hooks: HookPipeline | None = None,  # 可选：治理插件管线（D8 权限闸已改造为插件，D9）
-    budget: ToolBudget | None = None,  # 可选：工具声明预算，耗尽后追加一轮无工具收尾
+    budget: ToolBudget | None = None,  # 可选：工具声明预算，耗尽后追加一轮收尾
+    finalize_tools: tuple[str, ...] = (),  # P0-4：收尾轮仍可用的零成本工具白名单（由业务层点名）
 ) -> LoopResult:
     history = list(messages)
     fingerprints: Counter[tuple[str, str]] = Counter()  # 动作指纹 = 工具名+参数（不含 call_id）
@@ -136,11 +138,14 @@ def run_loop(
                     )
                     return _finalize_once(
                         engine,
+                        registry,
                         history,
                         trace,
                         iteration + 1,
                         context,
                         fingerprints,
+                        hooks,
+                        finalize_tools,
                     )
                 tool_declarations[call.name] += 1
                 total_declarations += 1
@@ -230,15 +235,23 @@ def _budget_receipt(scope: BudgetScope) -> str:
 
 def _finalize_once(
     engine: QueryEngine,
+    registry: ToolRegistry,
     history: list[Message],
     trace: list[TurnTrace],
     iteration: int,
     context: ContextManager | None,
     fingerprints: Counter[tuple[str, str]],
+    hooks: HookPipeline | None,
+    finalize_tools: tuple[str, ...],
 ) -> LoopResult:
-    """预算耗尽后的最后一次模型调用：不给工具菜单，只允许直接回答。"""
+    """预算耗尽后的收尾：菜单只剩白名单工具（业务层点名的零成本工具）。
+
+    白名单订单正常执行（不计预算——预算防烧钱，它们免费），执行完递归进
+    一轮真·无工具收尾（白名单置空）；白名单之外的订单照旧补回执止损。
+    """
+    menu = [s for s in registry.schemas() if s["name"] in finalize_tools]
     outbound = context.fit(history) if context is not None else history
-    turn = engine.query(outbound, tools=[])
+    turn = engine.query(outbound, tools=menu)
     assistant = turn.message
     turn_trace = TurnTrace(
         iteration=iteration,
@@ -249,7 +262,14 @@ def _finalize_once(
     trace.append(turn_trace)
     history.append(assistant)
 
-    if assistant.tool_calls:
+    if not assistant.tool_calls:
+        return LoopResult("completed", history, assistant.content, iteration, trace)
+
+    whitelist_ids = {
+        call.id for call in assistant.tool_calls
+        if call.name in finalize_tools and registry.get(call.name) is not None
+    }
+    if not whitelist_ids:
         _record_budget_exceeded_calls(
             turn_trace,
             history,
@@ -258,7 +278,58 @@ def _finalize_once(
             "total",
         )
         return LoopResult("tool_budget_exceeded", history, None, iteration, trace)
-    return LoopResult("completed", history, assistant.content, iteration, trace)
+
+    for call in assistant.tool_calls:
+        fp = (call.name, call.arguments)
+        fingerprints[fp] += 1
+        if call.id in whitelist_ids:
+            result, outcome, truncated = _run_whitelisted_call(registry, hooks, call)
+            turn_trace.tool_traces.append(ToolTrace(
+                call_id=call.id,
+                name=call.name,
+                arguments=call.arguments,
+                repeat_count=fingerprints[fp],
+                outcome=outcome,
+                result_chars=len(result),
+                truncated=truncated,
+                result_preview=_result_preview(result),
+            ))
+            history.append(Message(role="tool", tool_call_id=call.id, content=result))
+        else:
+            receipt = _budget_receipt("total")
+            turn_trace.tool_traces.append(ToolTrace(
+                call_id=call.id,
+                name=call.name,
+                arguments=call.arguments,
+                repeat_count=fingerprints[fp],
+                outcome="budget_exceeded",
+                result_chars=len(receipt),
+                result_preview=_result_preview(receipt),
+                budget_scope="total",
+            ))
+            history.append(Message(role="tool", tool_call_id=call.id, content=receipt))
+    # 白名单工具交付后，再补一轮真·无工具收尾让模型交终答
+    return _finalize_once(
+        engine, registry, history, trace, iteration + 1, context, fingerprints, hooks, ()
+    )
+
+
+def _run_whitelisted_call(
+    registry: ToolRegistry,
+    hooks: HookPipeline | None,
+    call: ToolCall,
+) -> tuple[str, ToolOutcome, bool]:
+    """收尾轮的白名单执行：照样过插线板（权限闸不放假），只是不计预算。"""
+    if hooks is None:
+        result = execute_tool(registry, call)
+        return result, _classify_tool_result(result), False
+    allowed, block_message = hooks.run_pre(call.name, call.arguments)
+    if not allowed:
+        return block_message, "blocked", False
+    result = execute_tool(registry, call)
+    outcome = _classify_tool_result(result)
+    result = hooks.run_post(call.name, call.arguments, result)
+    return result, outcome, "已截断，原文" in result
 
 
 def _classify_tool_result(result: str) -> ToolOutcome:

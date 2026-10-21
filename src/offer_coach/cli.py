@@ -78,6 +78,8 @@ def diagnose_cmd(
     memory: Path = typer.Option(Path("memory.db"), "--memory", help="记忆库路径：跨次诊断记住候选人弱点"),
     retrieval: str = typer.Option("auto", "--retrieval", help="检索模式：auto=有向量用混合，没向量用拆词；phrase=旧基线；terms=拆词；hybrid=混合召回"),
     rerank: bool = typer.Option(False, "--rerank", help="精排复评：hybrid 粗排后用本地裁判模型复评（仅 auto/hybrid 下可用；本地推理，不花 API 钱）"),
+    max_tool_calls: int = typer.Option(8, "--max-tool-calls", help="总工具调用预算：防死循环烧钱，超过后进入收尾轮"),
+    max_kb_calls: int = typer.Option(5, "--max-kb-calls", help="知识库检索预算：长稿薄弱点多可调大"),
 ) -> None:
     """诊断一份面试稿：分析回答 → 对照题库 → 生成报告。真调模型，会花几分钱。"""
     if resume and not session:
@@ -114,6 +116,7 @@ def diagnose_cmd(
     outcome = diagnose_run(
         transcript, engine, db, gate=gate, session_path=session_path, resume=resume,
         memory=store, retrieval_mode=retrieval_mode, embedder=embedder, reranker=reranker,
+        max_tool_calls=max_tool_calls, max_kb_calls=max_kb_calls,
     )
     if outcome.status == "failed":
         typer.echo(outcome.report, err=True)
