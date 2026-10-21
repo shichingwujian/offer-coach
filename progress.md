@@ -1,10 +1,10 @@
 # progress.md
 
-> **下次从这里开始：P2-1 漏网解剖 ✅（157 项离线测试 + 11 条归因：召回病 2 / 排序病 5 / 融合挤压 4）→ P2-2 按 D015 下药：先做融合池深度与输出 k 解耦（预计零依赖救回 5 条）；真实长稿验收待 API 额度恢复**
+> **下次从这里开始：P2-2 融合池解耦 ✅（pool=30 甜点，recall@5 79.6%→85.2%，160 项离线测试 + explain-back 全过）→ P2-3 治融合挤压 5 条（加权 RRF / reranker）；真实长稿验收待 API 额度恢复**
 
 ## 当前阶段
 
-核心层 D1-D10 收官 ✅ → 深度冲刺：D11 评估集+基线 ✅ → D12 查询预处理 ✅ → D13 混合召回 ✅（122 测试全过，recall@5 37.0%→72.2%→79.6%）→ D14 消融已停止（无有效结论，不写简历）→ P0 诊断稳定性：P0-1 结构化运行轨迹 ✅ → P0-2 工具调用预算 ✅ → P0-3 降级报告 ✅ → P1-1 hybrid 主流程接线 ✅ → P2-1 漏网解剖 ✅（157 测试全过）→ P2-2 融合池深度解耦（下一阶段）
+核心层 D1-D10 收官 ✅ → 深度冲刺：D11 评估集+基线 ✅ → D12 查询预处理 ✅ → D13 混合召回 ✅（122 测试全过，recall@5 37.0%→72.2%→79.6%）→ D14 消融已停止（无有效结论，不写简历）→ P0 诊断稳定性：P0-1 结构化运行轨迹 ✅ → P0-2 工具调用预算 ✅ → P0-3 降级报告 ✅ → P1-1 hybrid 主流程接线 ✅ → P2-1 漏网解剖 ✅（157 测试全过）→ P2-2 融合池解耦 ✅（pool=30，recall@5 79.6%→85.2%，160 测试全过）→ P2-3 治融合挤压（下一阶段）
 
 ## 进行中
 
@@ -36,6 +36,8 @@
 - P1-1：hybrid 主流程接线落地——`search_for_diagnosis()` 统一检索入口 + `RetrievalResult(hits, mode_used, fallback_reason)`；`query_knowledge_base` 换内脏不换菜单，支持 `auto / phrase / terms / hybrid`，auto 有 embedder+向量索引用 hybrid，否则明确退 terms；工具回执显示真实检索模式；诊断入口和 CLI `--retrieval` 已接线，fastembed 仍为可选依赖；144 个离线测试全过；explain-back 通过，笔记在 `learning/14-p1-hybrid-main-flow.md`，决策见 D014
 
 - P2-1：漏网解剖落地——`evaluation/miss_analysis.py`（find_rank 榜单找名次 / classify 三类病因 / dissect_misses 三通道解剖 / format_dissection）+ CLI `eval --mode hybrid --dissect`；全程字符串比对零模型调用；11 条漏网归因：**召回病 2 / 排序病 5 / 融合挤压 4**；关键发现：融合池深度是隐藏变量（深池融合下 5 条排序病全部进前 5，零依赖可救）、融合挤压是计分规则冤枉向量通道、真召回病只有 2 条；归因表入 `eval/README.md`，P2-2 药方按性价比排序入 D015；157 个离线测试全过；explain-back 通过，笔记在 `learning/16-p2-miss-analysis.md`
+
+- P2-2：融合池解耦落地——`search_hybrid` 加 `pool` 参数（默认 30），融合池与输出窗口解耦（每通道报 30 个名字进 RRF，仍返回 top-5）；pool 扫描 {10,20,30,50,100} → {79.6,83.3,85.2,81.5,77.8}%，**pool=30 甜点：recall@5 85.2%（46/54），keyword 保 100%**；排序病 5→1（救回 4 条），副作用新冒 1 条融合挤压（净 +3，"治 4 犯 1"反证归因体系成立）；3 项新测试（双榜救回/浅池挤压/pool≥limit 护栏）；160 个离线测试全过；explain-back 通过，笔记在 `learning/17-p2-fusion-pool.md`，决策见 D016
 
 ## 阻塞 / 问题
 

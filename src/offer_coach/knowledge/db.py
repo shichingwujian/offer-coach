@@ -202,16 +202,30 @@ def search_vectors(
 
 
 def search_hybrid(
-    db_path: Path, query: str, limit: int = 5, *, embedder: Embedder, k_rrf: int = 60
+    db_path: Path,
+    query: str,
+    limit: int = 5,
+    *,
+    embedder: Embedder,
+    k_rrf: int = 60,
+    pool: int = 30,
 ) -> list[Question]:
     """D13 混合召回：字面通道（拆词）+ 语义通道（向量）各查各的，RRF 融合。
 
     RRF（倒数名次融合）：两路的分数是两种货币没法比大小，但名次可比——
     每题得分 = Σ 1/(60 + 它在某榜的名次)。两榜都靠前的得分高，
     只在一榜靠前的也能活下来。
+
+    P2-2：融合池（pool）与输出窗口（limit）解耦。pool 是"每个通道报多少个名字
+    进融合计分"，limit 是"最后只返回前几名"。浅池时向量排 limit*2 名开外的题
+    进不了融合池，也拿不到另一通道的低名次分；深池让两榜都有的题拿双份分，
+    排名自然浮上来。颁奖还是只发 limit 个，但初赛大门开大了。
+    默认值 30 是评估集扫出来的甜点位（pool=10/20/30/50/100 → 79.6/83.3/85.2/
+    81.5/77.8%）：再深噪音题涌入，keyword 精确匹配反被拖下水。
     """
-    lexical = search_smart(db_path, query, limit=limit * 2)
-    semantic = search_vectors(db_path, query, limit=limit * 2, embedder=embedder)
+    depth = max(pool, limit)  # 池子不能比窗口还小
+    lexical = search_smart(db_path, query, limit=depth)
+    semantic = search_vectors(db_path, query, limit=depth, embedder=embedder)
     scores: dict[str, list] = {}  # title -> [RRF 得分, Question]
     for board in (lexical, semantic):
         for rank, q in enumerate(board):

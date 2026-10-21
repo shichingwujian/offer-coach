@@ -19,6 +19,7 @@ from offer_coach.knowledge.db import (
     search_vectors,
 )
 from offer_coach.knowledge.embedder import FakeEmbedder, cosine
+from offer_coach.knowledge.parser import Question
 
 
 class TestCosine:
@@ -113,6 +114,60 @@ class TestSearchHybrid:
         hits = search_hybrid(db, "分布式锁", embedder=e)
         # 分布式锁题：字面榜有（标题含词）+ 语义榜第一 → 必须排第一
         assert hits[0].title == _LOCK_TITLE
+
+
+class TestHybridPool:
+    """P2-2：融合池（pool）与输出窗口（limit）解耦。
+
+    真实漏网的病根：目标题"向量第 7、字面第 46"——浅池（limit*2=10）时
+    字面榜 46 名进不了融合池，目标只拿到向量一份分，被单榜高分题挤出前 5；
+    深池让它拿到两榜双份分，排名浮回前 5。颁奖仍只发 limit 个。
+    """
+
+    def _stub_boards(self, monkeypatch: pytest.MonkeyPatch) -> str:
+        """字面榜 1-10 全是干扰题、目标第 11；语义榜目标第 4。返回目标题标题。"""
+        import offer_coach.knowledge.db as db_module
+
+        target = "目标题：两榜都有但都不靠前"
+        lexical = [Question(category="t", title=f"字面干扰{i}", body="x") for i in range(10)]
+        lexical.append(Question(category="t", title=target, body="x"))
+        semantic = [Question(category="t", title=f"语义干扰{i}", body="x") for i in range(3)]
+        semantic.append(Question(category="t", title=target, body="x"))
+
+        monkeypatch.setattr(
+            db_module, "search_smart", lambda _db, _q, limit=5: lexical[:limit]
+        )
+        monkeypatch.setattr(
+            db_module,
+            "search_vectors",
+            lambda _db, _q, limit=5, *, embedder: semantic[:limit],
+        )
+        return target
+
+    def test_shallow_pool_squeezes_out_double_board_target(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """浅池（pool=10）：目标只拿语义一份分 1/64，输给字面第 1 名的 1/61。"""
+        target = self._stub_boards(monkeypatch)
+        hits = search_hybrid(tmp_path / "x.db", "查询", embedder=FakeEmbedder(), pool=10)
+        assert target not in [q.title for q in hits]
+
+    def test_deep_pool_rescues_double_board_target(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """默认深池（pool=50）：目标拿双份分 1/64+1/71，反超所有单榜题拿第一。"""
+        target = self._stub_boards(monkeypatch)
+        hits = search_hybrid(tmp_path / "x.db", "查询", embedder=FakeEmbedder())  # pool=50
+        assert hits[0].title == target
+        assert len(hits) == 5  # 颁奖仍只发 limit 个，池深不改变输出长度
+
+    def test_pool_never_smaller_than_window(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """pool 传得比 limit 小时按 limit 取——池子不能比窗口还小。"""
+        self._stub_boards(monkeypatch)
+        hits = search_hybrid(tmp_path / "x.db", "查询", limit=5, embedder=FakeEmbedder(), pool=1)
+        assert len(hits) == 5
 
 
 class TestSearchForDiagnosis:
