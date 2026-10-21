@@ -134,10 +134,11 @@ def eval_cmd(
     k: int = typer.Option(5, help="recall@k 的 k（前 k 个结果里命中即算中）"),
     mode: str = typer.Option("phrase", help="检索模式：phrase=整句短语（基线）/ terms=拆词OR（D12）/ hybrid=混合召回（D13）"),
     dissect: bool = typer.Option(False, "--dissect", help="漏网解剖：查每条漏网的目标题在三通道各排第几（需 --mode hybrid）"),
+    rerank: bool = typer.Option(False, "--rerank", help="精排复评：融合后 cross-encoder 重打分（需 --mode hybrid，P2-3b）"),
 ) -> None:
     """召回评估：跑评估集出 recall@k。纯本地检索，零模型调用、零成本。"""
-    if dissect and mode != "hybrid":
-        typer.echo("漏网解剖要对比三个通道，请用 --mode hybrid --dissect", err=True)
+    if (dissect or rerank) and mode != "hybrid":
+        typer.echo("漏网解剖和精排复评都基于混合召回，请用 --mode hybrid", err=True)
         raise typer.Exit(code=1)
     cases = load_eval_set(eval_set)
     # 注入被测的检索函数（同一接口换内脏：基线短语 vs D12 拆词 vs D13 混合召回）
@@ -149,12 +150,18 @@ def eval_cmd(
         from offer_coach.knowledge.embedder import FastEmbedder  # 懒加载：只有真跑混合才下载模型
 
         embedder = FastEmbedder()
-        search = lambda q: search_hybrid(db, q, limit=k, embedder=embedder)
+        if rerank:
+            from offer_coach.knowledge.reranker import FastReranker  # 同样懒加载（P2-3b）
+
+            reranker = FastReranker()
+            search = lambda q: search_hybrid(db, q, limit=k, embedder=embedder, reranker=reranker)
+        else:
+            search = lambda q: search_hybrid(db, q, limit=k, embedder=embedder)
     else:
         typer.echo(f"未知模式 {mode}，可选：phrase / terms / hybrid", err=True)
         raise typer.Exit(code=1)
     report = run_recall(cases, search, k=k)
-    typer.echo(f"检索模式：{mode}")
+    typer.echo(f"检索模式：{mode}{' + reranker' if rerank else ''}")
     typer.echo(format_report(report))
     if dissect and report.misses:
         # P2-1 漏网解剖：同一查询在三通道各拉完整榜单，找标准答案名次（纯本地）

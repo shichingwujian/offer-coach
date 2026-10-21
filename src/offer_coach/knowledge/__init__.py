@@ -10,9 +10,13 @@ from offer_coach.knowledge.db import (
     search_questions,
 )
 from offer_coach.knowledge.parser import Question, parse_file, parse_markdown
+from offer_coach.knowledge.reranker import FakeReranker, FastReranker, Reranker
 
 __all__ = [
+    "FakeReranker",
+    "FastReranker",
     "Question",
+    "Reranker",
     "RetrievalMode",
     "RetrievalResult",
     "build_db",

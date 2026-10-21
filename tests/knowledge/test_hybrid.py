@@ -170,6 +170,55 @@ class TestHybridPool:
         assert len(hits) == 5
 
 
+class TestHybridWeights:
+    """P2-3a：vec_weight 是向量通道的话语权（一票算几分）。
+
+    融合挤压的病根：目标题"向量前 5、字面没进池"只有一张票，
+    压不过字面第 1 名。w=2 时向量票翻倍，单打也能赢。
+    """
+
+    def _stub_boards(self, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
+        """字面榜：干扰题第 1、目标不在榜；语义榜：目标第 3。返回 (目标, 字面干扰王)。"""
+        import offer_coach.knowledge.db as db_module
+
+        target = "目标题：只有向量裁判看得上"
+        lexical_king = "字面干扰王"
+        lexical = [Question(category="t", title=lexical_king, body="x")]
+        lexical += [Question(category="t", title=f"字面干扰{i}", body="x") for i in range(4)]
+        semantic = [Question(category="t", title=f"语义干扰{i}", body="x") for i in range(2)]
+        semantic.append(Question(category="t", title=target, body="x"))
+
+        monkeypatch.setattr(
+            db_module, "search_smart", lambda _db, _q, limit=5: lexical[:limit]
+        )
+        monkeypatch.setattr(
+            db_module,
+            "search_vectors",
+            lambda _db, _q, limit=5, *, embedder: semantic[:limit],
+        )
+        return target, lexical_king
+
+    def test_default_weight_keeps_lexical_king_on_top(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """w=1（一人一票）：字面第 1 的 1/61 > 目标向量第 3 的 1/63——现状不变。"""
+        target, lexical_king = self._stub_boards(monkeypatch)
+        hits = search_hybrid(tmp_path / "x.db", "查询", embedder=FakeEmbedder())
+        assert hits[0].title == lexical_king
+        assert target not in [q.title for q in hits[:1]]
+
+    def test_double_weight_promotes_semantic_only_target(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """w=2：目标 2/63 ≈ 0.032 > 字面第 1 的 1/61 ≈ 0.016——反超字面干扰王。"""
+        target, lexical_king = self._stub_boards(monkeypatch)
+        hits = search_hybrid(
+            tmp_path / "x.db", "查询", embedder=FakeEmbedder(), vec_weight=2.0
+        )
+        titles = [q.title for q in hits]
+        assert titles.index(target) < titles.index(lexical_king)
+
+
 class TestSearchForDiagnosis:
     """正式诊断入口：请求模式和真实使用模式分开，fallback 必须留痕。"""
 

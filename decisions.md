@@ -111,6 +111,15 @@
 - 影响：CLI 改用 `diagnose_run()`；旧 `diagnose()` 对 degraded/failed 继续抛错以保护旧评估入口；session 在降级时也保存；只有 full 才写 `diagnosis_summary`
 - 边界：138 项离线测试通过；仍未做真实 API 长稿验收，不得宣称真实模型端到端稳定性已验证
 
+## D017 | 2026-10-21 | 融合挤压用药：加权 RRF 否决，v2-m3 reranker 独断采纳
+
+- 背景：P2-2 后剩 8 条漏网（召回病 2 / 排序病 1 / 融合挤压 5）；用户在 feature-spec 阶段判断"加权是针对当前题库的调参，题库变了就不行，要上好的"——要求评估加权与 reranker 两条路线
+- 选项：(a) 加权 RRF（vec_weight 扫描）(b) base reranker 独断/合议 (c) v2-m3 reranker 独断/合议
+- 决定：加权否决（无甜点位：w≥1.5 救不了挤压反砸 keyword 到 80%）；采纳 v2-m3 独断（92.6%，全场最高）；合议模式保留代码作为弱裁判兜底备用
+- 理由：评估集一局定胜负。加权 = 在被污染的名次上调汇率；reranker = 换信息源读原文。合议制规律：**弱裁判时合议兜底（base +3.7pp），强裁判时合议稀释（v2-m3 -3.7pp）**——裁判够强，独裁优于合议
+- 影响：recall@5 85.2% → 92.6%（50/54），keyword 100%；`Reranker` 协议 + FastReranker（v2-m3 懒加载，fastembed 内置无新包）+ FakeReranker；`search_hybrid` 加 `reranker`/`rerank_alpha`；CLI `eval --rerank`；8 项新测试（170 全过）
+- 边界：reranker 尚未接入正式诊断主流程（`search_for_diagnosis`），归后续阶段；剩余 4 条漏网是召回病（没进粗排前 30，复评看不到），同义词/题库侧药方优先级最后；v2-m3 570MB 本地模型，首次下载走 hf-mirror
+
 ## D016 | 2026-10-21 | 融合池默认 pool=30：评估集扫出来的甜点位，不是定理
 
 - 背景：P2-2 按 D015 第一味药实施融合池解耦（`search_hybrid` 加 `pool` 参数）；初设 50 时 recall@5 涨到 81.5% 但 keyword 从 100% 掉到 95%（"Agentic RAG"被 Agentic RL/CFT 噪音题挤出）

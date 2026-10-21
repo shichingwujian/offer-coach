@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from offer_coach.knowledge.embedder import Embedder, cosine
 from offer_coach.knowledge.parser import Question, parse_file
 from offer_coach.knowledge.preprocess import extract_terms
+from offer_coach.knowledge.reranker import Reranker
 
 RetrievalMode = Literal["auto", "phrase", "terms", "hybrid"]
 RetrievalChannel = Literal["phrase", "terms", "hybrid"]
@@ -209,6 +210,10 @@ def search_hybrid(
     embedder: Embedder,
     k_rrf: int = 60,
     pool: int = 30,
+    vec_weight: float = 1.0,
+    reranker: Reranker | None = None,
+    rerank_top: int = 30,
+    rerank_alpha: float | None = None,
 ) -> list[Question]:
     """D13 混合召回：字面通道（拆词）+ 语义通道（向量）各查各的，RRF 融合。
 
@@ -222,17 +227,57 @@ def search_hybrid(
     排名自然浮上来。颁奖还是只发 limit 个，但初赛大门开大了。
     默认值 30 是评估集扫出来的甜点位（pool=10/20/30/50/100 → 79.6/83.3/85.2/
     81.5/77.8%）：再深噪音题涌入，keyword 精确匹配反被拖下水。
+
+    P2-3：vec_weight 是向量通道的话语权（一票算几分）。默认 1.0 = 一人一票。
+    评估集扫描已否决加权方案（救融合挤压必砸 keyword，D017），参数留作实验记录。
+
+    P2-3b：给了 reranker 就走两阶段——RRF 粗排圈出前 rerank_top 名，
+    cross-encoder 逐对精读"查询+题目"重新打分，重排后再裁前 limit 名。
+    精排只信内容不信名次：融合挤压里被字面噪音压掉的目标题由此捞回。
+    不给 reranker 则行为与 P2-2 完全一致。
+
+    rerank_alpha（P2-3c 合议制）：None = 复评裁判独断（纯按复评分重排）；
+    0~1 = 合议——两分数各自归一化到 [0,1]（RRF 分和复评分是两种货币，
+    先换成可比的），最终分 = (1-α)·粗排分 + α·复评分。α=0 等于没请裁判。
     """
     depth = max(pool, limit)  # 池子不能比窗口还小
     lexical = search_smart(db_path, query, limit=depth)
     semantic = search_vectors(db_path, query, limit=depth, embedder=embedder)
     scores: dict[str, list] = {}  # title -> [RRF 得分, Question]
-    for board in (lexical, semantic):
+    for board, weight in ((lexical, 1.0), (semantic, vec_weight)):
         for rank, q in enumerate(board):
             entry = scores.setdefault(q.title, [0.0, q])
-            entry[0] += 1.0 / (k_rrf + rank + 1)
+            entry[0] += weight / (k_rrf + rank + 1)
     ranked = sorted(scores.values(), key=lambda e: -e[0])
-    return [entry[1] for entry in ranked[:limit]]
+    hits = [entry[1] for entry in ranked]
+    if reranker is not None:
+        # 两阶段：粗排圈决赛圈 → 精排读原文重打分。复评文本与 build_vectors 同款
+        # （标题 + 正文前 200 字），保证粗排精排读的是同一份内容。
+        finals = ranked[: max(rerank_top, limit)]
+        candidates = [entry[1] for entry in finals]
+        texts = [f"{q.title}\n{q.body[:200]}" for q in candidates]
+        rerank_scores = reranker.score(query, texts)
+        if rerank_alpha is None:
+            # 独断：复评分数说了算
+            hits = [q for _s, q in sorted(zip(rerank_scores, candidates), key=lambda p: -p[0])]
+        else:
+            # 合议：粗排分和复评分各自归一化到 [0,1] 再加权
+            rrf_norm = _normalize([entry[0] for entry in finals])
+            rr_norm = _normalize(rerank_scores)
+            blended = [
+                (1 - rerank_alpha) * a + rerank_alpha * b
+                for a, b in zip(rrf_norm, rr_norm)
+            ]
+            hits = [q for _s, q in sorted(zip(blended, candidates), key=lambda p: -p[0])]
+    return hits[:limit]
+
+
+def _normalize(values: list[float]) -> list[float]:
+    """最小-最大归一化到 [0,1]：把两种货币的分数换成可比较的相对高低。"""
+    lo, hi = min(values), max(values)
+    if hi == lo:
+        return [0.0 for _ in values]
+    return [(v - lo) / (hi - lo) for v in values]
 
 
 def search_for_diagnosis(
