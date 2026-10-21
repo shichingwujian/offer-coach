@@ -1,6 +1,6 @@
 # progress.md
 
-> **下次从这里开始：P2-4 reranker 接入诊断主流程 ✅（--rerank 开关，降级链 hybrid+rerank→hybrid→terms 全留痕，174 项离线测试全过）→ 下一步可选：剩 4 条召回病（同义词，优先级低）/ 真实长稿验收待 API 额度恢复 / P3 产品化**
+> **下次从这里开始：P2-4 reranker 接入诊断主流程 ✅（--rerank 开关，降级链 hybrid+rerank→hybrid→terms 全留痕，174 项离线测试全过）→ 真实长稿验收前置已备齐（eval/long/ 稿子+runbook+冒烟脚本 scripts/ping_api.py），等 API 充值后按 eval/long/README.md 跑 → 之后可选：剩 4 条召回病（优先级低）/ P3 产品化**
 
 ## 当前阶段
 
