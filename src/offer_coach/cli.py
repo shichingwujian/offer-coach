@@ -77,6 +77,7 @@ def diagnose_cmd(
     resume: bool = typer.Option(False, "--resume", help="从存档续跑（需配合 --session）"),
     memory: Path = typer.Option(Path("memory.db"), "--memory", help="记忆库路径：跨次诊断记住候选人弱点"),
     retrieval: str = typer.Option("auto", "--retrieval", help="检索模式：auto=有向量用混合，没向量用拆词；phrase=旧基线；terms=拆词；hybrid=混合召回"),
+    rerank: bool = typer.Option(False, "--rerank", help="精排复评：hybrid 粗排后用本地裁判模型复评（仅 auto/hybrid 下可用；本地推理，不花 API 钱）"),
 ) -> None:
     """诊断一份面试稿：分析回答 → 对照题库 → 生成报告。真调模型，会花几分钱。"""
     if resume and not session:
@@ -84,6 +85,10 @@ def diagnose_cmd(
         raise typer.Exit(code=1)
     if retrieval not in ("auto", "phrase", "terms", "hybrid"):
         typer.echo(f"未知检索模式 {retrieval}，可选：auto / phrase / terms / hybrid", err=True)
+        raise typer.Exit(code=1)
+    if rerank and retrieval not in ("auto", "hybrid"):
+        # 精排的对象是粗排圈出的决赛圈——phrase/terms 没有决赛圈可复评
+        typer.echo("--rerank 只在 auto / hybrid 模式下可用", err=True)
         raise typer.Exit(code=1)
     retrieval_mode = cast(RetrievalMode, retrieval)
     try:
@@ -97,13 +102,18 @@ def diagnose_cmd(
     store = MemoryStore(memory)  # 档案柜（D10）：不存在会自动建
     session_path = Path("sessions") / f"{session}.json" if session else None
     embedder = None
+    reranker = None
     if retrieval_mode in ("auto", "hybrid"):
         from offer_coach.knowledge.embedder import FastEmbedder  # 懒加载：只在这些模式下准备向量模型
 
         embedder = FastEmbedder()
+        if rerank:
+            from offer_coach.knowledge.reranker import FastReranker  # 懒加载：要了才下载裁判模型
+
+            reranker = FastReranker()
     outcome = diagnose_run(
         transcript, engine, db, gate=gate, session_path=session_path, resume=resume,
-        memory=store, retrieval_mode=retrieval_mode, embedder=embedder,
+        memory=store, retrieval_mode=retrieval_mode, embedder=embedder, reranker=reranker,
     )
     if outcome.status == "failed":
         typer.echo(outcome.report, err=True)

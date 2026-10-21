@@ -24,7 +24,7 @@ from offer_coach.knowledge.preprocess import extract_terms
 from offer_coach.knowledge.reranker import Reranker
 
 RetrievalMode = Literal["auto", "phrase", "terms", "hybrid"]
-RetrievalChannel = Literal["phrase", "terms", "hybrid"]
+RetrievalChannel = Literal["phrase", "terms", "hybrid", "hybrid+rerank"]
 
 
 class RetrievalResult(BaseModel):
@@ -287,11 +287,15 @@ def search_for_diagnosis(
     *,
     mode: RetrievalMode = "auto",
     embedder: Embedder | None = None,
+    reranker: Reranker | None = None,
 ) -> RetrievalResult:
     """正式诊断的统一检索入口：请求一种模式，报告真实使用的路径。
 
     auto 的兜底原则是"增强能力缺失不拖垮诊断"：没有 embedder、没建向量索引、
     或向量通道加载失败时退回 terms，并把退化原因写进 RetrievalResult。
+    reranker（P2-4）是增强中的增强：只挂在 hybrid 路径上（精排的对象是粗排
+    圈出的决赛圈，terms 没有决赛圈可复评）；裁判加载失败时退回普通 hybrid，
+    hybrid 本身也挂才退 terms——每一级退化都在 fallback_reason 留痕。
     """
     if mode == "phrase":
         return RetrievalResult(hits=search_questions(db_path, query, limit), mode_used="phrase")
@@ -305,12 +309,27 @@ def search_for_diagnosis(
     if not has_vectors(db_path):
         return _terms_fallback(db_path, query, limit, "未建向量索引")
     try:
-        hits = search_hybrid(db_path, query, limit, embedder=embedder)
+        hits = search_hybrid(db_path, query, limit, embedder=embedder, reranker=reranker)
     except (ImportError, OSError, RuntimeError) as e:
+        if reranker is not None:
+            # 裁判挂了不拖垮诊断：摘掉裁判重试粗排，留痕退化原因
+            try:
+                hits = search_hybrid(db_path, query, limit, embedder=embedder)
+            except (ImportError, OSError, RuntimeError) as e2:
+                return _terms_fallback(
+                    db_path, query, limit, f"向量通道不可用：{type(e2).__name__}: {e2}"
+                )
+            return RetrievalResult(
+                hits=hits,
+                mode_used="hybrid",
+                fallback_reason=f"复评通道不可用：{type(e).__name__}: {e}",
+            )
         return _terms_fallback(
             db_path, query, limit, f"向量通道不可用：{type(e).__name__}: {e}"
         )
-    return RetrievalResult(hits=hits, mode_used="hybrid")
+    return RetrievalResult(
+        hits=hits, mode_used="hybrid+rerank" if reranker is not None else "hybrid"
+    )
 
 
 def _terms_fallback(

@@ -16,6 +16,7 @@ from offer_coach.engine.engine import QueryEngine
 from offer_coach.engine.models import Message
 from offer_coach.knowledge.db import RetrievalMode, search_for_diagnosis
 from offer_coach.knowledge.embedder import Embedder
+from offer_coach.knowledge.reranker import Reranker
 from offer_coach.tools.registry import ToolDef, ToolRegistry
 
 
@@ -24,12 +25,13 @@ def make_query_knowledge_base(
     *,
     retrieval_mode: RetrievalMode = "auto",
     embedder: Embedder | None = None,
+    reranker: Reranker | None = None,
 ) -> Callable[[str], str]:
     """工厂函数：造出一个"焊死数据库路径"的查库工具。模型只需要填关键词。"""
 
     def query_knowledge_base(keyword: str) -> str:
         result = search_for_diagnosis(
-            db_path, keyword, mode=retrieval_mode, embedder=embedder
+            db_path, keyword, mode=retrieval_mode, embedder=embedder, reranker=reranker
         )
         mode_line = f"检索模式：{result.mode_used}"
         if result.fallback_reason:
@@ -124,6 +126,7 @@ def default_registry(
     *,
     retrieval_mode: RetrievalMode = "auto",
     embedder: Embedder | None = None,
+    reranker: Reranker | None = None,
 ) -> ToolRegistry:
     """装配三个工具的默认注册表。发动机和数据仓库都在此接入（开店前的装配）。"""
     registry = ToolRegistry()
@@ -136,7 +139,7 @@ def default_registry(
             "required": ["keyword"],
         },
         func=make_query_knowledge_base(
-            db_path, retrieval_mode=retrieval_mode, embedder=embedder
+            db_path, retrieval_mode=retrieval_mode, embedder=embedder, reranker=reranker
         ),
     ))
     registry.register(ToolDef(

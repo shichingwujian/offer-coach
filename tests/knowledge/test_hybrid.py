@@ -20,6 +20,14 @@ from offer_coach.knowledge.db import (
 )
 from offer_coach.knowledge.embedder import FakeEmbedder, cosine
 from offer_coach.knowledge.parser import Question
+from offer_coach.knowledge.reranker import FakeReranker
+
+
+class _BrokenReranker:
+    """加载即崩的裁判：模拟模型文件损坏，验证降级不拖垮诊断（P2-4）。"""
+
+    def score(self, query: str, texts: list[str]) -> list[float]:
+        raise RuntimeError("模型文件损坏")
 
 
 class TestCosine:
@@ -269,3 +277,39 @@ class TestSearchForDiagnosis:
         assert terms.mode_used == "terms"
         assert hybrid.mode_used == "hybrid"
         assert hybrid.fallback_reason is None
+
+    def test_reranker_reports_honest_mode_and_reorders(self, tmp_path: Path) -> None:
+        """P2-4：裁判上岗要如实报 hybrid+rerank，且复评分能推翻粗排名次。"""
+        e = FakeEmbedder({"跨进程互斥怎么搞": [1.0, 0.0], _LOCK_TEXT: [1.0, 0.0]}, dim=2)
+        db = _build_bank_with_vecs(tmp_path, e)
+        cosine_text = "什么是余弦相似度？\n衡量两个向量的夹角。"
+        reranker = FakeReranker({cosine_text: 99.0})  # 裁判独宠余弦题
+
+        result = search_for_diagnosis(db, "跨进程互斥怎么搞", embedder=e, reranker=reranker)
+
+        assert result.mode_used == "hybrid+rerank"
+        assert result.fallback_reason is None
+        assert result.hits[0].title == "什么是余弦相似度？"  # 裁判说了算
+
+    def test_broken_reranker_falls_back_to_plain_hybrid(self, tmp_path: Path) -> None:
+        """P2-4：裁判加载崩溃 → 退普通 hybrid 继续诊断，退化原因留痕。"""
+        e = FakeEmbedder({"跨进程互斥怎么搞": [1.0, 0.0], _LOCK_TEXT: [1.0, 0.0]}, dim=2)
+        db = _build_bank_with_vecs(tmp_path, e)
+
+        result = search_for_diagnosis(db, "跨进程互斥怎么搞", embedder=e, reranker=_BrokenReranker())
+
+        assert result.mode_used == "hybrid"  # 裁判崩了不拖垮诊断
+        assert result.fallback_reason is not None
+        assert result.fallback_reason.startswith("复评通道不可用")
+        assert result.hits[0].title == _LOCK_TITLE
+
+    def test_terms_fallback_keeps_reranker_off_duty(self, tmp_path: Path) -> None:
+        """P2-4：没有 embedder 就没有粗排决赛圈，裁判无班可上，一起歇着。"""
+        e = FakeEmbedder()
+        db = _build_bank_with_vecs(tmp_path, e)
+
+        result = search_for_diagnosis(db, "分布式锁", reranker=FakeReranker())
+
+        assert result.mode_used == "terms"
+        assert result.fallback_reason == "未提供向量模型"
+        assert result.hits[0].title == _LOCK_TITLE

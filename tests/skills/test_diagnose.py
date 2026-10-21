@@ -13,6 +13,7 @@ import pytest
 from offer_coach.engine import EngineConfig, FakeProvider, QueryEngine, QueryEngineError, RetryConfig
 from offer_coach.knowledge import build_db, build_vectors
 from offer_coach.knowledge.embedder import FakeEmbedder
+from offer_coach.knowledge.reranker import FakeReranker
 from offer_coach.skills import diagnose, diagnose_run
 
 
@@ -88,6 +89,31 @@ class TestDiagnose:
         assert result.status == "full"
         tool_receipt = provider.calls[-1][-1].content or ""
         assert "检索模式：hybrid" in tool_receipt
+        assert title in tool_receipt
+
+    def test_main_flow_reranker_shows_in_tool_receipt(self, tmp_path: Path) -> None:
+        """P2-4：裁判沿 CLI→diagnose_run→工具工厂→统一入口全链条上岗，回执如实报 hybrid+rerank。"""
+        transcript = tmp_path / "面试稿.txt"
+        transcript.write_text("面试官：跨进程互斥怎么搞？\n候选人：不太会。", encoding="utf-8")
+        title = "什么是分布式锁？"
+        body = "Redis 可实现，SETNX 语义。"
+        src = tmp_path / "bank"
+        (src / "01-t").mkdir(parents=True)
+        (src / "01-t" / "index.md").write_text(f"### Q：{title}\n\n{body}\n", encoding="utf-8")
+        db = tmp_path / "questions.db"
+        build_db(src, db)
+        embedder = FakeEmbedder({"跨进程互斥怎么搞": [1.0, 0.0], f"{title}\n{body}": [1.0, 0.0]}, dim=2)
+        build_vectors(db, embedder)
+        engine, provider = make_engine([
+            FakeProvider.tool_turn("query_knowledge_base", '{"keyword": "跨进程互斥怎么搞"}', call_id="c1"),
+            FakeProvider.text_turn("# 面试诊断报告\n\n最终报告"),
+        ])
+
+        result = diagnose_run(transcript, engine, db, embedder=embedder, reranker=FakeReranker())
+
+        assert result.status == "full"
+        tool_receipt = provider.calls[-1][-1].content or ""
+        assert "检索模式：hybrid+rerank" in tool_receipt
         assert title in tool_receipt
 
     def test_kb_budget_adds_receipt_then_finalizes(self, stage: tuple[Path, Path]) -> None:

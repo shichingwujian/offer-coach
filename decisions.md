@@ -111,8 +111,15 @@
 - 影响：CLI 改用 `diagnose_run()`；旧 `diagnose()` 对 degraded/failed 继续抛错以保护旧评估入口；session 在降级时也保存；只有 full 才写 `diagnosis_summary`
 - 边界：138 项离线测试通过；仍未做真实 API 长稿验收，不得宣称真实模型端到端稳定性已验证
 
-## D017 | 2026-10-21 | 融合挤压用药：加权 RRF 否决，v2-m3 reranker 独断采纳
+## D018 | 2026-10-21 | reranker 接入正式诊断主流程：只挂 hybrid 路径，降级链留痕
 
+- 背景：P2-3 的 v2-m3 裁判（recall@5 92.6%）只在评估链路生效，正式诊断的检索仍是粗排完就发奖
+- 决定：`search_for_diagnosis` / 工具工厂 / `diagnose_run` / CLI 四层各加一个 `reranker` 参数原样下传；CLI 加 `--rerank`（仅 auto/hybrid 可用）；裁判加载崩 → 退普通 hybrid 并留痕；`mode_used` 新增 `hybrid+rerank` 如实上报
+- 理由：裁判是精排，精排对象是粗排圈出的决赛圈——terms 模式没有决赛圈可复评，不配裁判是刻意设计；降级原则与 D014 相同：增强能力缺失不拖垮诊断，每级退化都在 fallback_reason 留痕（回执是出问题时唯一的现场照片）
+- 影响：174 项离线测试全过（新增 4 项：裁判上岗如实报模式并推翻粗排 / 裁判崩溃退 hybrid / terms 模式裁判歇着 / 主流程端到端回执含 hybrid+rerank）；不传 `--rerank` 旧行为零变化
+- 边界：裁判推理本地零 API 费用；真实长稿带裁判验收仍待 API 额度恢复
+
+## D017 | 2026-10-21 | 融合挤压用药：加权 RRF 否决，v2-m3 reranker 独断采纳
 - 背景：P2-2 后剩 8 条漏网（召回病 2 / 排序病 1 / 融合挤压 5）；用户在 feature-spec 阶段判断"加权是针对当前题库的调参，题库变了就不行，要上好的"——要求评估加权与 reranker 两条路线
 - 选项：(a) 加权 RRF（vec_weight 扫描）(b) base reranker 独断/合议 (c) v2-m3 reranker 独断/合议
 - 决定：加权否决（无甜点位：w≥1.5 救不了挤压反砸 keyword 到 80%）；采纳 v2-m3 独断（92.6%，全场最高）；合议模式保留代码作为弱裁判兜底备用
